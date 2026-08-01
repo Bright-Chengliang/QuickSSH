@@ -1,0 +1,41 @@
+# Local tooling, IDE, and agent state
+.idea/
+.agents/
+.omx/
+.workbuddy/
+local.properties
+*.iml
+.DS_Store
+
+# Gradle / Android build outputs
+.gradle/
+build/
+app/build/
+app/.cxx/
+captures/
+*.apk
+*.aab
+*.hprof
+
+# App runtime data stored outside Android sandbox
+.QuickSSH/
+
+# Local debug artifacts and screenshots
+outputs/
+artifacts/
+after-pick-smoke.png
+window.xml
+*.log
+
+# Environment / secret files
+.env
+.env.*
+.envrc
+*.pem
+*.ppk
+*.jks
+*.keystore
+*.p12
+*.pfx
+*id_rsa*
+*id_ed25519*
