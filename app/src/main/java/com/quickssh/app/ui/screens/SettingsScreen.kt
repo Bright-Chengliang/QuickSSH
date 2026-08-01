@@ -1,3 +1,8 @@
+// QuickSSH - Settings
+// Copyright (c) 2026 Chengliang Liu
+// Author: https://github.com/Bright-Chengliang
+// License: MIT License (see LICENSE)
+
 package com.quickssh.app.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
@@ -32,6 +37,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.painterResource
+import com.quickssh.app.BuildConfig
 import com.quickssh.app.R
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -180,6 +186,37 @@ fun SettingsScreen(
                         color = MaterialTheme.colorScheme.outline
                     )
                 }
+            }
+
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    text = "About",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                Text(
+                    text = "QuickSSH ${BuildConfig.VERSION_NAME}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                Text(
+                    text = "Author: Chengliang Liu (Bright-Chengliang)",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.outline
+                )
+                Text(
+                    text = "GitHub: https://github.com/Bright-Chengliang",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.outline
+                )
+                Text(
+                    text = "Licensed under MIT License.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.outline
+                )
             }
         }
     }

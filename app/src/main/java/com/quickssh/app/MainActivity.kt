@@ -1,3 +1,8 @@
+// QuickSSH - Android SSH client
+// Copyright (c) 2026 Chengliang Liu
+// Author: https://github.com/Bright-Chengliang
+// License: MIT License (see LICENSE)
+
 package com.quickssh.app
 
 import android.Manifest
