@@ -654,8 +654,15 @@ class MainActivity : FragmentActivity() {
             if (uri != null) {
                 if (!ensureInstallPermissionIfNeeded(uri)) return
                 runCatching {
+                    val mimeType = runCatching { contentResolver.getType(uri) }
+                        .getOrNull()
+                        ?: if (isApkUri(uri)) {
+                            "application/vnd.android.package-archive"
+                        } else {
+                            "*/*"
+                        }
                     val viewIntent = Intent(Intent.ACTION_VIEW).apply {
-                        setDataAndType(uri, contentResolver.getType(uri) ?: "*/*")
+                        setDataAndType(uri, mimeType)
                         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     }
                     startActivity(Intent.createChooser(viewIntent, "Open with"))
@@ -2684,9 +2691,26 @@ class MainActivity : FragmentActivity() {
         }.getOrNull()
     }
 
+    /**
+     * APKs need the user to trust QuickSSH as an install source on Android O+.
+     * Keep this check limited to APKs; opening ordinary downloaded files must
+     * continue through the regular ACTION_VIEW flow without requesting install
+     * privileges.
+     */
     private fun ensureInstallPermissionIfNeeded(uri: Uri): Boolean {
         if (!isApkUri(uri) || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return true
-        if (packageManager.canRequestPackageInstalls()) return true
+
+        val canRequestInstalls = runCatching {
+            packageManager.canRequestPackageInstalls()
+        }.getOrElse {
+            Toast.makeText(
+                this,
+                "Unable to verify APK install permission",
+                Toast.LENGTH_SHORT
+            ).show()
+            return false
+        }
+        if (canRequestInstalls) return true
 
         runCatching {
             startActivity(
@@ -2695,23 +2719,39 @@ class MainActivity : FragmentActivity() {
                     Uri.parse("package:$packageName")
                 )
             )
+        }.onFailure {
+            Toast.makeText(
+                this,
+                "Open system settings to allow APK installation from QuickSSH",
+                Toast.LENGTH_LONG
+            ).show()
         }
-        Toast.makeText(this, "Allow QuickSSH to install APK files, then open this file again", Toast.LENGTH_LONG).show()
+        Toast.makeText(
+            this,
+            "Allow QuickSSH to install APK files, then open this file again",
+            Toast.LENGTH_LONG
+        ).show()
         return false
-
     }
 
     private fun isApkUri(uri: Uri): Boolean {
-        val mimeType = contentResolver.getType(uri).orEmpty()
+        val mimeType = runCatching { contentResolver.getType(uri) }.getOrNull().orEmpty()
         if (mimeType == "application/vnd.android.package-archive") return true
-        return displayNameFromUri(uri).lowercase().endsWith(".apk")
+        val uriName = uri.lastPathSegment.orEmpty().substringBefore('?')
+        if (uriName.lowercase().endsWith(".apk")) return true
+        return runCatching { displayNameFromUri(uri) }
+            .getOrDefault("")
+            .lowercase()
+            .endsWith(".apk")
     }
 
     private fun displayNameFromUri(uri: Uri): String {
-        contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
-            val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-            if (index >= 0 && cursor.moveToFirst()) {
-                return cursor.getString(index).orEmpty()
+        runCatching {
+            contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (index >= 0 && cursor.moveToFirst()) {
+                    return cursor.getString(index).orEmpty()
+                }
             }
         }
         return uri.lastPathSegment.orEmpty().substringAfterLast('/')
