@@ -25,8 +25,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -53,20 +51,23 @@ fun ActiveSessionsScreen(
     onReconnectSession: (String) -> Unit,
     onDisconnectSession: (String) -> Unit
 ) {
+    val language = LocalQuickSshLanguage.current
     var editingSession by remember { mutableStateOf<SshSessionInfo?>(null) }
     var editingName by remember { mutableStateOf("") }
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Sessions (${sessions.size})") },
+            QuickSshPageHeader(
+                title = language.text("会话 (${sessions.size})", "Sessions (${sessions.size})"),
+                subtitle = language.text("后台 SSH 会话", "Background SSH sessions"),
                 navigationIcon = {
-                    FeedbackTextButton(onClick = onBackClicked) { Text("Back") }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                )
+                    FeedbackTextButton(
+                        onClick = onBackClicked,
+                        colors = androidx.compose.material3.ButtonDefaults.textButtonColors(
+                            contentColor = MaterialTheme.colorScheme.primary
+                        )
+                    ) { Text(language.text("返回", "Back")) }
+                }
             )
         },
         bottomBar = bottomBar
@@ -79,7 +80,7 @@ fun ActiveSessionsScreen(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "No background SSH sessions",
+                    text = language.text("没有后台 SSH 会话", "No background SSH sessions"),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.outline
                 )

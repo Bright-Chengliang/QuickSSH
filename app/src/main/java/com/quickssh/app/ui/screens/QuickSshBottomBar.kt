@@ -13,6 +13,8 @@ import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -20,6 +22,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.unit.dp
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.ui.res.painterResource
@@ -37,13 +40,17 @@ fun QuickSshBottomBar(
     onTunnelsClicked: () -> Unit = {},
     onSettingsClicked: () -> Unit
 ) {
-    NavigationBar {
+    NavigationBar(
+        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        tonalElevation = 0.dp,
+    ) {
         QuickSshNavItem(
             selected = selectedTab == "LIST",
             onClick = onHomeClicked,
             icon = Icons.Default.Home,
-            contentDescription = "主页",
-            label = "主页"
+            contentDescription = LocalQuickSshLanguage.current.text("主机", "Hosts"),
+            label = LocalQuickSshLanguage.current.text("主机", "Hosts")
         )
         val sessionsInteractionSource = remember { MutableInteractionSource() }
         val sessionsPressed by sessionsInteractionSource.collectIsPressedAsState()
@@ -55,6 +62,13 @@ fun QuickSshBottomBar(
             selected = selectedTab == "SESSIONS",
             onClick = onSessionsClicked,
             interactionSource = sessionsInteractionSource,
+            colors = NavigationBarItemDefaults.colors(
+                selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                selectedTextColor = MaterialTheme.colorScheme.primary,
+                indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+            ),
             icon = {
                 BadgedBox(
                     modifier = Modifier.scale(sessionsScale),
@@ -64,17 +78,17 @@ fun QuickSshBottomBar(
                         }
                     }
                 ) {
-                    Icon(imageVector = Icons.Default.List, contentDescription = "后台")
+                    Icon(imageVector = Icons.Default.List, contentDescription = LocalQuickSshLanguage.current.text("会话", "Sessions"))
                 }
             },
-            label = { Text("后台") }
+            label = { Text(LocalQuickSshLanguage.current.text("会话", "Sessions")) }
         )
         QuickSshNavItem(
             selected = selectedTab == "TRANSFER",
             onClick = onTransferClicked,
             icon = Icons.Default.Send,
-            contentDescription = "传输",
-            label = "传输"
+            contentDescription = LocalQuickSshLanguage.current.text("传输", "Transfers"),
+            label = LocalQuickSshLanguage.current.text("传输", "Transfers")
         )
         val tunnelsInteractionSource = remember { MutableInteractionSource() }
         val tunnelsPressed by tunnelsInteractionSource.collectIsPressedAsState()
@@ -86,6 +100,13 @@ fun QuickSshBottomBar(
             selected = selectedTab == "TUNNELS",
             onClick = onTunnelsClicked,
             interactionSource = tunnelsInteractionSource,
+            colors = NavigationBarItemDefaults.colors(
+                selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                selectedTextColor = MaterialTheme.colorScheme.primary,
+                indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+            ),
             icon = {
                 BadgedBox(
                     modifier = Modifier.scale(tunnelsScale),
@@ -95,17 +116,17 @@ fun QuickSshBottomBar(
                         }
                     }
                 ) {
-                    Icon(painter = painterResource(R.drawable.ic_link), contentDescription = "隧道")
+                    Icon(painter = painterResource(R.drawable.ic_link), contentDescription = LocalQuickSshLanguage.current.text("隧道", "Tunnels"))
                 }
             },
-            label = { Text("隧道") }
+            label = { Text(LocalQuickSshLanguage.current.text("隧道", "Tunnels")) }
         )
         QuickSshNavItem(
             selected = selectedTab == "SETTINGS",
             onClick = onSettingsClicked,
             icon = Icons.Default.Settings,
-            contentDescription = "设置",
-            label = "设置"
+            contentDescription = LocalQuickSshLanguage.current.text("设置", "Settings"),
+            label = LocalQuickSshLanguage.current.text("设置", "Settings")
         )
     }
 }
@@ -129,6 +150,13 @@ private fun RowScope.QuickSshNavItem(
         selected = selected,
         onClick = onClick,
         interactionSource = interactionSource,
+        colors = NavigationBarItemDefaults.colors(
+            selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
+            selectedTextColor = MaterialTheme.colorScheme.primary,
+            indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+        ),
         icon = {
             Icon(
                 imageVector = icon,

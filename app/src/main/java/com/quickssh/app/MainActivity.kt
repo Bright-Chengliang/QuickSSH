@@ -12,6 +12,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.ServiceConnection
+import android.graphics.Color as AndroidColor
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -38,6 +39,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
@@ -52,6 +54,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import java.util.concurrent.Executor
 import com.quickssh.app.data.AppDatabase
 import com.quickssh.app.data.SshConfig
@@ -79,6 +83,8 @@ import com.quickssh.app.service.TunnelForegroundService
 import com.quickssh.app.service.TunnelStatus
 import com.quickssh.app.service.terminalQuickUploadDirectory
 import com.quickssh.app.ui.screens.ActiveSessionsScreen
+import com.quickssh.app.ui.screens.AppLanguage
+import com.quickssh.app.ui.screens.LocalQuickSshLanguage
 import com.quickssh.app.ui.screens.QuickSshBottomBar
 import com.quickssh.app.ui.screens.SettingsScreen
 import com.quickssh.app.ui.screens.SshAddScreen
@@ -94,6 +100,7 @@ import com.quickssh.app.ui.screens.shellSafePathReference
 import com.quickssh.app.ui.screens.transferQueueTaskUiState
 import com.quickssh.app.ui.screens.transferTaskProgressDetail
 import com.quickssh.app.ui.screens.transferTasksWithBatchState
+import com.quickssh.app.ui.theme.QuickSshTheme
 import com.quickssh.app.utils.TerminalBuffer
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
@@ -353,6 +360,7 @@ private const val REMOTE_DOWNLOAD_CONFIRM_FILE_THRESHOLD = 200
 private const val REMOTE_DOWNLOAD_CONFIRM_DIRECTORY_THRESHOLD = 50
 
 class MainActivity : FragmentActivity() {
+    private var uiLanguage by mutableStateOf(AppLanguage.ZH)
 
     private lateinit var mainExecutor: Executor
 
@@ -419,15 +427,30 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        WindowCompat.setDecorFitsSystemWindows(window, true)
+        // Keep system chrome aligned with the app's dark top and bottom bars.
+        window.statusBarColor = AndroidColor.rgb(247, 246, 242)
+        window.navigationBarColor = AndroidColor.rgb(239, 237, 231)
+        WindowInsetsControllerCompat(window, window.decorView).apply {
+            isAppearanceLightStatusBars = true
+            isAppearanceLightNavigationBars = true
+        }
+
         mainExecutor = ContextCompat.getMainExecutor(this)
+        uiLanguage = AppLanguage.fromCode(
+            getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getString(KEY_LANGUAGE, AppLanguage.ZH.code)
+        )
 
         setContent {
-            MaterialTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
-                ) {
-                    AppNavigation()
+            QuickSshTheme(dynamicColor = false) {
+                CompositionLocalProvider(LocalQuickSshLanguage provides uiLanguage) {
+                    Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = MaterialTheme.colorScheme.background
+                    ) {
+                        AppNavigation()
+                    }
                 }
             }
         }
@@ -631,8 +654,15 @@ class MainActivity : FragmentActivity() {
             if (uri != null) {
                 if (!ensureInstallPermissionIfNeeded(uri)) return
                 runCatching {
+                    val mimeType = runCatching { contentResolver.getType(uri) }
+                        .getOrNull()
+                        ?: if (isApkUri(uri)) {
+                            "application/vnd.android.package-archive"
+                        } else {
+                            "*/*"
+                        }
                     val viewIntent = Intent(Intent.ACTION_VIEW).apply {
-                        setDataAndType(uri, contentResolver.getType(uri) ?: "*/*")
+                        setDataAndType(uri, mimeType)
                         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     }
                     startActivity(Intent.createChooser(viewIntent, "Open with"))
@@ -1542,6 +1572,7 @@ class MainActivity : FragmentActivity() {
             }
             "SETTINGS" -> {
                 SettingsScreen(
+                    language = uiLanguage,
                     autoWrapEnabled = autoWrapEnabled,
                     privacyModeEnabled = privacyModeEnabled,
                     biometricUnlockEnabled = biometricUnlockEnabled,
@@ -1613,6 +1644,10 @@ class MainActivity : FragmentActivity() {
                             configBackupStatus = "Import failed: ${error.localizedMessage ?: error.javaClass.simpleName}"
                             pendingImportBackupPassword = null
                         }
+                    },
+                    onLanguageChange = { language ->
+                        uiLanguage = language
+                        settings.edit().putString(KEY_LANGUAGE, language.code).apply()
                     }
                 )
             }
@@ -2656,9 +2691,26 @@ class MainActivity : FragmentActivity() {
         }.getOrNull()
     }
 
+    /**
+     * APKs need the user to trust QuickSSH as an install source on Android O+.
+     * Keep this check limited to APKs; opening ordinary downloaded files must
+     * continue through the regular ACTION_VIEW flow without requesting install
+     * privileges.
+     */
     private fun ensureInstallPermissionIfNeeded(uri: Uri): Boolean {
         if (!isApkUri(uri) || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return true
-        if (packageManager.canRequestPackageInstalls()) return true
+
+        val canRequestInstalls = runCatching {
+            packageManager.canRequestPackageInstalls()
+        }.getOrElse {
+            Toast.makeText(
+                this,
+                "Unable to verify APK install permission",
+                Toast.LENGTH_SHORT
+            ).show()
+            return false
+        }
+        if (canRequestInstalls) return true
 
         runCatching {
             startActivity(
@@ -2667,23 +2719,39 @@ class MainActivity : FragmentActivity() {
                     Uri.parse("package:$packageName")
                 )
             )
+        }.onFailure {
+            Toast.makeText(
+                this,
+                "Open system settings to allow APK installation from QuickSSH",
+                Toast.LENGTH_LONG
+            ).show()
         }
-        Toast.makeText(this, "Allow QuickSSH to install APK files, then open this file again", Toast.LENGTH_LONG).show()
+        Toast.makeText(
+            this,
+            "Allow QuickSSH to install APK files, then open this file again",
+            Toast.LENGTH_LONG
+        ).show()
         return false
-
     }
 
     private fun isApkUri(uri: Uri): Boolean {
-        val mimeType = contentResolver.getType(uri).orEmpty()
+        val mimeType = runCatching { contentResolver.getType(uri) }.getOrNull().orEmpty()
         if (mimeType == "application/vnd.android.package-archive") return true
-        return displayNameFromUri(uri).lowercase().endsWith(".apk")
+        val uriName = uri.lastPathSegment.orEmpty().substringBefore('?')
+        if (uriName.lowercase().endsWith(".apk")) return true
+        return runCatching { displayNameFromUri(uri) }
+            .getOrDefault("")
+            .lowercase()
+            .endsWith(".apk")
     }
 
     private fun displayNameFromUri(uri: Uri): String {
-        contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
-            val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-            if (index >= 0 && cursor.moveToFirst()) {
-                return cursor.getString(index).orEmpty()
+        runCatching {
+            contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (index >= 0 && cursor.moveToFirst()) {
+                    return cursor.getString(index).orEmpty()
+                }
             }
         }
         return uri.lastPathSegment.orEmpty().substringAfterLast('/')
@@ -3045,6 +3113,7 @@ class MainActivity : FragmentActivity() {
 
     private companion object {
         const val PREFS_NAME = "quickssh_settings"
+        const val KEY_LANGUAGE = "ui_language"
         const val KEY_TERMINAL_AUTO_WRAP = "terminal_auto_wrap"
         const val KEY_PRIVACY_MODE = "privacy_mode"
         const val KEY_BIOMETRIC_UNLOCK = "biometric_unlock"

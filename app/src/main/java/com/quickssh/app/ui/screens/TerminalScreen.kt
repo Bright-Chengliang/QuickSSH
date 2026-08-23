@@ -49,6 +49,20 @@ import com.quickssh.app.R
 import com.quickssh.app.data.SshConfig
 import com.quickssh.app.utils.AnsiRenderer
 import com.quickssh.app.utils.TerminalBuffer
+import com.quickssh.app.ui.theme.QuickSshTerminalAccent
+import com.quickssh.app.ui.theme.QuickSshTerminalAccentPressed
+import com.quickssh.app.ui.theme.QuickSshTerminalBackground
+import com.quickssh.app.ui.theme.QuickSshTerminalChrome
+import com.quickssh.app.ui.theme.QuickSshTerminalDanger
+import com.quickssh.app.ui.theme.QuickSshTerminalDisabled
+import com.quickssh.app.ui.theme.QuickSshTerminalKey
+import com.quickssh.app.ui.theme.QuickSshTerminalKeyAccent
+import com.quickssh.app.ui.theme.QuickSshTerminalKeyContent
+import com.quickssh.app.ui.theme.QuickSshTerminalKeySecondary
+import com.quickssh.app.ui.theme.QuickSshTerminalMuted
+import com.quickssh.app.ui.theme.QuickSshTerminalSelection
+import com.quickssh.app.ui.theme.QuickSshTerminalText
+import com.quickssh.app.ui.theme.QuickSshConnected
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -170,7 +184,7 @@ fun TerminalScreen(
             TopAppBar(
                 title = { Text("Connected: ${config.name} (${config.host})") },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color(0xFF1E1E24),
+                    containerColor = QuickSshTerminalChrome,
                     titleContentColor = Color.White
                 ),
                 actions = {
@@ -179,7 +193,7 @@ fun TerminalScreen(
                         contentDescription = "Home",
                         onClick = onHomeClicked,
                         tint = Color.White,
-                        pressedTint = Color(0xFF93C5FD)
+                        pressedTint = QuickSshTerminalAccentPressed
                     )
                     FeedbackIconButton(
                         drawableResId = R.drawable.ic_content_copy,
@@ -188,15 +202,15 @@ fun TerminalScreen(
                             copyMode = !copyMode
                             if (!copyMode) selectedCopyRows = emptySet()
                         },
-                        tint = if (copyMode) Color(0xFF93C5FD) else Color.White,
-                        pressedTint = Color(0xFF60A5FA)
+                        tint = if (copyMode) QuickSshTerminalAccentPressed else QuickSshTerminalText,
+                        pressedTint = QuickSshTerminalAccent
                     )
                     FeedbackIconButton(
                         imageVector = Icons.Default.Close,
                         contentDescription = "Disconnect",
                         onClick = onDisconnectClicked,
-                        tint = Color.Red,
-                        pressedTint = Color(0xFFFFA3A3)
+                        tint = QuickSshTerminalDanger,
+                        pressedTint = QuickSshTerminalDanger.copy(alpha = 0.72f)
                     )
                 }
             )
@@ -206,20 +220,20 @@ fun TerminalScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .background(Color(0xFF0F0F12))
+                .background(QuickSshTerminalBackground)
         ) {
             if (copyMode) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(Color(0xFF1E1E24))
+                        .background(QuickSshTerminalChrome)
                         .padding(horizontal = 12.dp, vertical = 4.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
                         text = "${selectedCopyRows.size} selected",
-                        color = Color(0xFFE5E7EB),
+                        color = QuickSshTerminalText,
                         modifier = Modifier.weight(1f)
                     )
                     FeedbackTextButton(onClick = { selectedCopyRows = logs.indices.toSet() }) { Text("All") }
@@ -243,7 +257,7 @@ fun TerminalScreen(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .background(Color(0xFF0F0F12))
+                    .background(QuickSshTerminalBackground)
             ) {
                 val density = LocalDensity.current
                 val textMeasurer = rememberTextMeasurer()
@@ -312,7 +326,7 @@ fun TerminalScreen(
                                 } else {
                                     Modifier.widthIn(min = terminalViewportWidth)
                                 })
-                                    .background(if (rowSelected) Color(0xFF1D4ED8).copy(alpha = 0.32f) else Color.Transparent)
+                                    .background(if (rowSelected) QuickSshTerminalSelection.copy(alpha = 0.32f) else Color.Transparent)
                                     .combinedClickable(
                                         onClick = {
                                             if (copyMode) {
@@ -341,7 +355,7 @@ fun TerminalScreen(
                     ) {
                         SmallFloatingActionButton(
                             onClick = { autoFollowOutput = true },
-                            containerColor = Color(0xFF2563EB),
+                            containerColor = QuickSshTerminalAccent,
                             contentColor = Color.White,
                             modifier = Modifier
                                 .align(Alignment.BottomEnd)
@@ -383,11 +397,11 @@ fun TerminalScreen(
                 if (quickUploadStatus.isNotBlank()) {
                     Text(
                         text = quickUploadStatus,
-                        color = Color(0xFFD4D4D8),
+                        color = QuickSshTerminalMuted,
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(Color(0xFF1E1E24))
+                            .background(QuickSshTerminalChrome)
                             .padding(horizontal = 12.dp, vertical = 4.dp)
                     )
                 }
@@ -395,14 +409,14 @@ fun TerminalScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(Color(0xFF1E1E24))
+                        .background(QuickSshTerminalChrome)
                         .padding(horizontal = 10.dp, vertical = if (isLandscape) 4.dp else 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Text(
                         text = "$",
-                        color = Color(0xFF60A5FA),
+                        color = QuickSshTerminalAccent,
                         fontFamily = FontFamily.Monospace,
                         fontSize = 16.sp,
                         modifier = Modifier.padding(end = 4.dp)
@@ -529,9 +543,9 @@ private fun TerminalInputIconButtonFrame(
     val scale by animateFloatAsState(if (isPressed) 0.92f else 1f, label = "terminalInputIconPressScale")
     val tint by animateColorAsState(
         targetValue = when {
-            !enabled -> Color(0xFF71717A)
-            isPressed -> Color(0xFF93C5FD)
-            else -> Color(0xFFE5E7EB)
+            !enabled -> QuickSshTerminalDisabled
+            isPressed -> QuickSshTerminalAccentPressed
+            else -> QuickSshTerminalText
         },
         label = "terminalInputIconTint"
     )
@@ -595,7 +609,7 @@ private fun TerminalControlPanel(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color(0xFF1A1A22))
+            .background(QuickSshTerminalChrome)
             .padding(horizontal = horizontalPadding, vertical = verticalPadding),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
@@ -609,7 +623,7 @@ private fun TerminalControlPanel(
             TerminalKeyButton(
                 label = if (expanded) "Hide keys" else "Show keys",
                 onClick = { onExpandedChange(!expanded) },
-                containerColor = Color(0xFF2563EB),
+                containerColor = QuickSshTerminalAccent,
                 contentColor = Color.White,
                 hapticFeedback = terminalKeyHaptic
             )
@@ -617,8 +631,8 @@ private fun TerminalControlPanel(
                 TerminalKeyButton(
                     label = key.label,
                     onClick = { onRawInputSend(key.sequence) },
-                    containerColor = if (key.accent) Color(0xFF3B3B47) else Color(0xFF27272A),
-                    contentColor = Color(0xFFF3F4F6),
+                    containerColor = if (key.accent) QuickSshTerminalKeyAccent else QuickSshTerminalKey,
+                    contentColor = QuickSshTerminalKeyContent,
                     hapticFeedback = terminalKeyHaptic
                 )
             }
@@ -627,8 +641,8 @@ private fun TerminalControlPanel(
                 TerminalKeyButton(
                     label = shortcut.label,
                     onClick = { onShortcutCommand(shortcut) },
-                    containerColor = Color(0xFF27272A),
-                    contentColor = Color(0xFFD4D4D8)
+                    containerColor = QuickSshTerminalKey,
+                    contentColor = QuickSshTerminalMuted
                 )
             }
         }
@@ -648,23 +662,23 @@ private fun TerminalControlPanel(
                         onCtrlModifierChange(false)
                         onAltModifierChange(false)
                     },
-                    containerColor = Color(0xFF374151),
-                    contentColor = Color(0xFFE5E7EB),
+                    containerColor = QuickSshTerminalKeySecondary,
+                    contentColor = QuickSshTerminalText,
                     hapticFeedback = terminalKeyHaptic
                 )
                 TerminalKeyButton(
                     label = "Prev cmd",
                     onClick = onPreviousCommand,
-                    containerColor = Color(0xFF374151),
-                    contentColor = Color(0xFFE5E7EB),
+                    containerColor = QuickSshTerminalKeySecondary,
+                    contentColor = QuickSshTerminalText,
                     hapticFeedback = terminalKeyHaptic,
                     enabled = canRecallPreviousCommand
                 )
                 TerminalKeyButton(
                     label = "Next cmd",
                     onClick = onNextCommand,
-                    containerColor = Color(0xFF374151),
-                    contentColor = Color(0xFFE5E7EB),
+                    containerColor = QuickSshTerminalKeySecondary,
+                    contentColor = QuickSshTerminalText,
                     hapticFeedback = terminalKeyHaptic,
                     enabled = canRecallNextCommand
                 )
@@ -692,8 +706,8 @@ private fun TerminalControlPanel(
                                 onCtrlModifierChange(false)
                                 onAltModifierChange(false)
                             },
-                            containerColor = if (key.accent) Color(0xFF3B3B47) else Color(0xFF27272A),
-                            contentColor = Color(0xFFF3F4F6),
+                            containerColor = if (key.accent) QuickSshTerminalKeyAccent else QuickSshTerminalKey,
+                            contentColor = QuickSshTerminalKeyContent,
                             hapticFeedback = terminalKeyHaptic
                         )
                     }
@@ -713,7 +727,7 @@ private fun ModifierKeyButton(
     TerminalKeyButton(
         label = label,
         onClick = { onSelectedChange(!selected) },
-        containerColor = if (selected) Color(0xFF16A34A) else Color(0xFF374151),
+        containerColor = if (selected) QuickSshConnected else QuickSshTerminalKeySecondary,
         contentColor = Color.White,
         hapticFeedback = hapticFeedback
     )
@@ -733,7 +747,7 @@ private fun TerminalKeyButton(
     val pressScale by animateFloatAsState(targetValue = if (isPressed) 0.94f else 1f, label = "terminalKeyPressScale")
     val pressedContainerColor by animateColorAsState(
         targetValue = when {
-            !enabled -> Color(0xFF27272A)
+            !enabled -> QuickSshTerminalKey
             isPressed -> containerColor.copy(alpha = 0.78f)
             else -> containerColor
         },
@@ -749,8 +763,8 @@ private fun TerminalKeyButton(
         colors = ButtonDefaults.buttonColors(
             containerColor = pressedContainerColor,
             contentColor = contentColor,
-            disabledContainerColor = Color(0xFF27272A),
-            disabledContentColor = Color(0xFF71717A)
+            disabledContainerColor = QuickSshTerminalKey,
+            disabledContentColor = QuickSshTerminalDisabled
         ),
         shape = RoundedCornerShape(4.dp),
         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),

@@ -21,8 +21,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -50,6 +48,7 @@ fun SshAddScreen(
     onTestConnectionClicked: (name: String, host: String, port: Int, user: String, authType: String, password: String, privateKey: String, workDirectory: String, postConnectCommand: String, terminalFontSizeSp: Int, terminalWrapEnabled: Boolean?, terminalTerm: String, terminalShortcuts: String) -> Unit,
     onSaveClicked: (name: String, host: String, port: Int, user: String, authType: String, password: String, privateKey: String, workDirectory: String, postConnectCommand: String, terminalFontSizeSp: Int, terminalWrapEnabled: Boolean?, terminalTerm: String, terminalShortcuts: String) -> Unit
 ) {
+    val language = LocalQuickSshLanguage.current
     val isEditing = configToEdit != null && !isCopyMode
     val isWorkspaceCopy = configToEdit != null && isCopyMode && configToEdit.id == 0L
     val lockedServerFields = isWorkspaceCopy
@@ -121,29 +120,22 @@ fun SshAddScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        when {
-                            isWorkspaceCopy -> "Add Workspace"
-                            isCopyMode -> "Copy Workspace"
-                            isEditing -> "Edit SSH Server"
-                            else -> "Add SSH Server"
-                        }
-                    )
+            QuickSshPageHeader(
+                title = when {
+                    isWorkspaceCopy -> language.text("添加工作区", "Add Workspace")
+                    isCopyMode -> language.text("复制工作区", "Copy Workspace")
+                    isEditing -> language.text("编辑 SSH 服务器", "Edit SSH Server")
+                    else -> language.text("添加 SSH 服务器", "Add SSH Server")
                 },
+                subtitle = language.text("连接、凭据与终端默认设置", "Connection, credentials and terminal defaults"),
                 navigationIcon = {
                     FeedbackIconButton(
                         imageVector = Icons.Default.ArrowBack,
                         contentDescription = "Back",
                         onClick = onBackClicked,
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer
+                        tint = MaterialTheme.colorScheme.primary
                     )
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                )
+                }
             )
         }
     ) { innerPadding ->

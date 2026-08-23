@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -38,8 +39,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -84,6 +83,7 @@ fun SshListScreen(
     onReorderServers: (List<Long>) -> Unit,
     onReorderWorkspaces: (Long, List<Long>) -> Unit
 ) {
+    val language = LocalQuickSshLanguage.current
     var searchQuery by remember { mutableStateOf("") }
     val filteredConfigs by remember(configs, searchQuery) { derivedStateOf { filterSshConfigs(configs, searchQuery) } }
     val groups by remember(filteredConfigs) { derivedStateOf { groupedSshServers(filteredConfigs) } }
@@ -95,23 +95,6 @@ fun SshListScreen(
     val expandedGroups = remember { mutableStateMapOf<String, Boolean>() }
 
     Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("QuickSSH Hosts") },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                ),
-                actions = {
-                    FeedbackIconButton(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = "Add server",
-                        onClick = onAddClicked,
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                }
-            )
-        },
         bottomBar = bottomBar
     ) { innerPadding ->
         Column(
@@ -120,18 +103,58 @@ fun SshListScreen(
                 .padding(innerPadding)
                 .padding(16.dp)
         ) {
-            Text(
-                text = "Servers and workspaces",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onBackground,
-                modifier = Modifier.padding(bottom = 12.dp)
-            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 4.dp, vertical = 4.dp)
+                    .padding(bottom = 16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(
+                        text = language.text("QuickSSH 主机", "QuickSSH Hosts"),
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    Text(
+                        text = language.text("服务器与工作区", "Servers and workspaces"),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
+                }
+                Text(
+                    text = language.text("${configs.size} 个配置", "${configs.size} profiles"),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(end = 4.dp)
+                )
+                FeedbackIconButton(
+                    imageVector = Icons.Default.Add,
+                    contentDescription = language.text("添加服务器", "Add server"),
+                    onClick = onAddClicked,
+                    modifier = Modifier.size(44.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
 
             if (configs.isNotEmpty()) {
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
-                    label = { Text("Search hosts, workspaces, paths") },
+                    label = { Text(language.text("搜索主机、工作区或路径", "Search hosts, workspaces, paths")) },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = null
+                        )
+                    },
+                    colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.36f),
+                        focusedContainerColor = MaterialTheme.colorScheme.surface
+                    ),
                     singleLine = true,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -151,7 +174,7 @@ fun SshListScreen(
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         Text(
-                            text = "No saved servers yet.",
+                            text = language.text("还没有保存的服务器。", "No saved servers yet."),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.outline
                         )
@@ -162,7 +185,7 @@ fun SshListScreen(
                                 modifier = Modifier.size(18.dp)
                             )
                             Text(
-                                text = "Add server",
+                                text = language.text("添加服务器", "Add server"),
                                 modifier = Modifier.padding(start = 8.dp)
                             )
                         }
@@ -176,7 +199,7 @@ fun SshListScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "No matching hosts or workspaces",
+                        text = language.text("没有匹配的主机或工作区", "No matching hosts or workspaces"),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.outline
                     )
