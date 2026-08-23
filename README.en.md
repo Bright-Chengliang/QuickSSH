@@ -36,9 +36,9 @@ Mobile SSH tools often stop at “connect and type commands”. In practice, dev
 
 ### Terminal upload with automatic path insertion
 
-**Motivation:** When running Codex or another file-aware TUI through SSH on a phone, uploading the file is only half the problem. Manually locating the remote path and switching back to the terminal interrupts the task and is especially awkward on a touch screen.
+**Motivation:** When running Codex or another capable agent through SSH on a phone, uploading the file is only half the problem. The agent can read and analyze a file once it receives the remote path, but manually locating that path and switching back to the terminal is tedious and especially awkward on a touch screen.
 
-**Implementation:** The terminal input bar has a dedicated upload action. Selected files are uploaded through the active SSH session into the current workspace's `.QuickSSH/upload` directory. After the transfer completes, QuickSSH inserts shell-safe remote paths directly into the terminal input field, ready for a command or a TUI that accepts file paths. Progress, successful paths, and failures remain visible in transfer history.
+**Implementation:** The terminal input bar has a dedicated upload action. Selected files are uploaded through the active SSH session into the current workspace's `.QuickSSH/upload` directory. After the transfer completes, QuickSSH inserts shell-safe remote paths directly into the terminal input field, ready to be given to the agent for reading and analysis. Progress, successful paths, and failures remain visible in transfer history.
 
 ### SSH tunnels for private services
 
