@@ -18,11 +18,15 @@ Mobile SSH tools often stop at “connect and type commands”. In practice, dev
 
 ### Workspace-aware server profiles
 
+**Keep separate directories, commands, and terminal settings for multiple projects on the same server.**
+
 **Motivation:** One server can host multiple projects or environments. A single flat connection record forces users to repeatedly re-enter working directories, terminal preferences, and post-connect commands, increasing the chance of using the wrong environment.
 
 **Implementation:** Server profiles are grouped by `host / port / username / authType`, while each workspace stores its own working directory, post-connect command, terminal settings, and shortcuts. Room stores servers, workspaces, tunnel presets, and transfer history with migrations for upgrades.
 
 ### Long-running SSH sessions
+
+**Long-running remote commands keep running when the phone is backgrounded or locked.**
 
 **Motivation:** Backgrounding or locking a phone should not terminate an important shell task. Binding the SSH connection directly to a screen makes that failure mode almost inevitable.
 
@@ -30,23 +34,31 @@ Mobile SSH tools often stop at “connect and type commands”. In practice, dev
 
 ### Observable and recoverable SFTP transfers
 
+**Browse the remote file tree and transfer files between the phone and the remote host without opening a separate SFTP tool, with progress, queues, and recovery after temporary interruptions.**
+
 **Motivation:** On a phone, users need to know whether a transfer is queued, progressing, paused, or recoverable after a failure. A fire-and-forget upload is not a usable file workflow.
 
 **Implementation:** The file browser supports multi-selection, pagination, recursive downloads, and confirmation plans. Transfers support conflict policies, queues, pause/resume, cancellation, retry, progress, and local history. A small SSHJ patch exposes transfer progress to the app's task model without replacing the transport layer.
 
 ### Terminal upload with automatic path insertion
 
-**Motivation:** When running Codex or another file-aware TUI through SSH on a phone, uploading the file is only half the problem. Manually locating the remote path and switching back to the terminal interrupts the task and is especially awkward on a touch screen.
+**Choose a file in the mobile SSH terminal, upload it remotely, and hand the inserted path to Codex for reading and analysis.**
 
-**Implementation:** The terminal input bar has a dedicated upload action. Selected files are uploaded through the active SSH session into the current workspace's `.QuickSSH/upload` directory. After the transfer completes, QuickSSH inserts shell-safe remote paths directly into the terminal input field, ready for a command or a TUI that accepts file paths. Progress, successful paths, and failures remain visible in transfer history.
+**Motivation:** When running Codex or another capable agent through SSH on a phone, uploading the file is only half the problem. The agent can read and analyze a file once it receives the remote path, but manually locating that path and switching back to the terminal is tedious and especially awkward on a touch screen.
+
+**Implementation:** The terminal input bar has a dedicated upload action. Selected files are uploaded through the active SSH session into the current workspace's `.QuickSSH/upload` directory. After the transfer completes, QuickSSH inserts shell-safe remote paths directly into the terminal input field, ready to be given to the agent for reading and analysis. Progress, successful paths, and failures remain visible in transfer history.
 
 ### SSH tunnels for private services
+
+**Open a remote private web service or development endpoint directly on the phone through an SSH tunnel.**
 
 **Motivation:** Development services are often bound to a remote loopback interface or private network. Port forwarding lets the phone reach those services without exposing them publicly.
 
 **Implementation:** QuickSSH supports local forwarding, automatic local-port allocation, multiple tunnels, reconnects, and a WebView for the forwarded local endpoint. HTTP Basic Auth prompts are handled inside the tunnel workflow.
 
 ### Explicit credential and host-key boundaries
+
+**Keep passwords and private keys in protected device storage and verify the server identity before trusting a connection.**
 
 **Motivation:** SSH credentials and host identity are high-value security material. Encrypting only the database, or passing plaintext credentials through service intents, is not a sufficient boundary.
 
