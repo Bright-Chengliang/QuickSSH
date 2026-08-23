@@ -425,7 +425,7 @@ class MainActivity : FragmentActivity() {
 
         WindowCompat.setDecorFitsSystemWindows(window, true)
         // Keep system chrome aligned with the app's dark top and bottom bars.
-        window.statusBarColor = AndroidColor.rgb(255, 255, 255)
+        window.statusBarColor = AndroidColor.rgb(247, 246, 242)
         window.navigationBarColor = AndroidColor.rgb(239, 237, 231)
         WindowInsetsControllerCompat(window, window.decorView).apply {
             isAppearanceLightStatusBars = true

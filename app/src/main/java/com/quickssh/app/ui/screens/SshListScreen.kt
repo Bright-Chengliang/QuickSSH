@@ -39,8 +39,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -96,24 +94,6 @@ fun SshListScreen(
     val expandedGroups = remember { mutableStateMapOf<String, Boolean>() }
 
     Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("QuickSSH Hosts") },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    titleContentColor = MaterialTheme.colorScheme.onSurface,
-                    actionIconContentColor = MaterialTheme.colorScheme.primary
-                ),
-                actions = {
-                    FeedbackIconButton(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = "Add server",
-                        onClick = onAddClicked,
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                }
-            )
-        },
         bottomBar = bottomBar
     ) { innerPadding ->
         Column(
@@ -125,19 +105,37 @@ fun SshListScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 12.dp),
+                    .padding(horizontal = 4.dp, vertical = 4.dp)
+                    .padding(bottom = 16.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "Servers and workspaces",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onBackground,
+                Column(
                     modifier = Modifier.weight(1f)
-                )
+                ) {
+                    Text(
+                        text = "QuickSSH Hosts",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    Text(
+                        text = "Servers and workspaces",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
+                }
                 Text(
                     text = "${configs.size} profiles",
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.outline
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(end = 4.dp)
+                )
+                FeedbackIconButton(
+                    imageVector = Icons.Default.Add,
+                    contentDescription = "Add server",
+                    onClick = onAddClicked,
+                    modifier = Modifier.size(44.dp),
+                    tint = MaterialTheme.colorScheme.primary
                 )
             }
 
