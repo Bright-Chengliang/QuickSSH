@@ -12,6 +12,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.ServiceConnection
+import android.content.res.Configuration
+import android.graphics.Color as AndroidColor
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -52,6 +54,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import java.util.concurrent.Executor
 import com.quickssh.app.data.AppDatabase
 import com.quickssh.app.data.SshConfig
@@ -419,6 +423,16 @@ class MainActivity : FragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        WindowCompat.setDecorFitsSystemWindows(window, true)
+        window.statusBarColor = AndroidColor.TRANSPARENT
+        window.navigationBarColor = AndroidColor.TRANSPARENT
+        val darkSystem = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+            Configuration.UI_MODE_NIGHT_YES
+        WindowInsetsControllerCompat(window, window.decorView).apply {
+            isAppearanceLightStatusBars = !darkSystem
+            isAppearanceLightNavigationBars = !darkSystem
+        }
 
         mainExecutor = ContextCompat.getMainExecutor(this)
 

@@ -13,6 +13,8 @@ import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -20,6 +22,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.unit.dp
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.ui.res.painterResource
@@ -37,13 +40,17 @@ fun QuickSshBottomBar(
     onTunnelsClicked: () -> Unit = {},
     onSettingsClicked: () -> Unit
 ) {
-    NavigationBar {
+    NavigationBar(
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        tonalElevation = 0.dp,
+    ) {
         QuickSshNavItem(
             selected = selectedTab == "LIST",
             onClick = onHomeClicked,
             icon = Icons.Default.Home,
-            contentDescription = "主页",
-            label = "主页"
+            contentDescription = "主机",
+            label = "主机"
         )
         val sessionsInteractionSource = remember { MutableInteractionSource() }
         val sessionsPressed by sessionsInteractionSource.collectIsPressedAsState()
@@ -55,6 +62,13 @@ fun QuickSshBottomBar(
             selected = selectedTab == "SESSIONS",
             onClick = onSessionsClicked,
             interactionSource = sessionsInteractionSource,
+            colors = NavigationBarItemDefaults.colors(
+                selectedIconColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                selectedTextColor = MaterialTheme.colorScheme.onSurface,
+                indicatorColor = MaterialTheme.colorScheme.secondaryContainer,
+                unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+            ),
             icon = {
                 BadgedBox(
                     modifier = Modifier.scale(sessionsScale),
@@ -64,10 +78,10 @@ fun QuickSshBottomBar(
                         }
                     }
                 ) {
-                    Icon(imageVector = Icons.Default.List, contentDescription = "后台")
+                    Icon(imageVector = Icons.Default.List, contentDescription = "会话")
                 }
             },
-            label = { Text("后台") }
+            label = { Text("会话") }
         )
         QuickSshNavItem(
             selected = selectedTab == "TRANSFER",
@@ -86,6 +100,13 @@ fun QuickSshBottomBar(
             selected = selectedTab == "TUNNELS",
             onClick = onTunnelsClicked,
             interactionSource = tunnelsInteractionSource,
+            colors = NavigationBarItemDefaults.colors(
+                selectedIconColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                selectedTextColor = MaterialTheme.colorScheme.onSurface,
+                indicatorColor = MaterialTheme.colorScheme.secondaryContainer,
+                unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+            ),
             icon = {
                 BadgedBox(
                     modifier = Modifier.scale(tunnelsScale),
@@ -129,6 +150,13 @@ private fun RowScope.QuickSshNavItem(
         selected = selected,
         onClick = onClick,
         interactionSource = interactionSource,
+        colors = NavigationBarItemDefaults.colors(
+            selectedIconColor = MaterialTheme.colorScheme.onSecondaryContainer,
+            selectedTextColor = MaterialTheme.colorScheme.onSurface,
+            indicatorColor = MaterialTheme.colorScheme.secondaryContainer,
+            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+        ),
         icon = {
             Icon(
                 imageVector = icon,

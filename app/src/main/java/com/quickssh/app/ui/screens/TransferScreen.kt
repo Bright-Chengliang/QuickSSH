@@ -412,8 +412,8 @@ private fun TransferProgressTopBar(
         TopAppBar(
             title = { Text("\u6587\u4ef6\u4f20\u8f93") },
             colors = TopAppBarDefaults.topAppBarColors(
-                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                containerColor = MaterialTheme.colorScheme.surface,
+                titleContentColor = MaterialTheme.colorScheme.onSurface
             )
         )
         when (mode) {
