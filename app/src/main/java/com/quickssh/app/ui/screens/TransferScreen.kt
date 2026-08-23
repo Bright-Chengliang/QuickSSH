@@ -401,6 +401,7 @@ private fun TransferProgressTopBar(
     progressText: String,
     progressFraction: Float?
 ) {
+    val language = LocalQuickSshLanguage.current
     val mode = transferTopProgressMode(
         isTransferring = isTransferring,
         progressText = progressText,
@@ -408,8 +409,8 @@ private fun TransferProgressTopBar(
     )
     Column {
         QuickSshPageHeader(
-            title = "文件传输",
-            subtitle = "SFTP uploads, downloads and transfer history"
+            title = language.text("文件传输", "File transfers"),
+            subtitle = language.text("SFTP 上传、下载与传输历史", "SFTP uploads, downloads and transfer history")
         )
         when (mode) {
             TransferTopProgressMode.Idle -> {

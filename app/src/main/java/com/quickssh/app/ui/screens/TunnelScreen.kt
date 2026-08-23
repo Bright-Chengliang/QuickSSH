@@ -94,13 +94,14 @@ fun TunnelScreen(
     onOpenInternal: (String) -> Unit,
     onOpenExternal: (String) -> Unit
 ) {
+    val language = LocalQuickSshLanguage.current
     val activeTunnels = tunnelStates.filter { it.status == TunnelStatus.CONNECTING || it.status == TunnelStatus.RUNNING }
 
     Scaffold(
         topBar = {
             QuickSshPageHeader(
-                title = "SSH 隧道",
-                subtitle = "Local port forwarding and private web services"
+                title = language.text("SSH 隧道", "SSH tunnels"),
+                subtitle = language.text("本地端口转发与内网服务", "Local port forwarding and private web services")
             )
         },
         bottomBar = bottomBar

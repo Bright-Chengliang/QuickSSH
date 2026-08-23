@@ -83,6 +83,7 @@ fun SshListScreen(
     onReorderServers: (List<Long>) -> Unit,
     onReorderWorkspaces: (Long, List<Long>) -> Unit
 ) {
+    val language = LocalQuickSshLanguage.current
     var searchQuery by remember { mutableStateOf("") }
     val filteredConfigs by remember(configs, searchQuery) { derivedStateOf { filterSshConfigs(configs, searchQuery) } }
     val groups by remember(filteredConfigs) { derivedStateOf { groupedSshServers(filteredConfigs) } }
@@ -113,26 +114,26 @@ fun SshListScreen(
                     modifier = Modifier.weight(1f)
                 ) {
                     Text(
-                        text = "QuickSSH Hosts",
+                        text = language.text("QuickSSH 主机", "QuickSSH Hosts"),
                         style = MaterialTheme.typography.titleLarge,
                         color = MaterialTheme.colorScheme.onBackground
                     )
                     Text(
-                        text = "Servers and workspaces",
+                        text = language.text("服务器与工作区", "Servers and workspaces"),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 2.dp)
                     )
                 }
                 Text(
-                    text = "${configs.size} profiles",
+                    text = language.text("${configs.size} 个配置", "${configs.size} profiles"),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(end = 4.dp)
                 )
                 FeedbackIconButton(
                     imageVector = Icons.Default.Add,
-                    contentDescription = "Add server",
+                    contentDescription = language.text("添加服务器", "Add server"),
                     onClick = onAddClicked,
                     modifier = Modifier.size(44.dp),
                     tint = MaterialTheme.colorScheme.primary
@@ -143,7 +144,7 @@ fun SshListScreen(
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
-                    label = { Text("Search hosts, workspaces, paths") },
+                    label = { Text(language.text("搜索主机、工作区或路径", "Search hosts, workspaces, paths")) },
                     leadingIcon = {
                         Icon(
                             imageVector = Icons.Default.Search,
@@ -173,7 +174,7 @@ fun SshListScreen(
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         Text(
-                            text = "No saved servers yet.",
+                            text = language.text("还没有保存的服务器。", "No saved servers yet."),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.outline
                         )
@@ -184,7 +185,7 @@ fun SshListScreen(
                                 modifier = Modifier.size(18.dp)
                             )
                             Text(
-                                text = "Add server",
+                                text = language.text("添加服务器", "Add server"),
                                 modifier = Modifier.padding(start = 8.dp)
                             )
                         }
@@ -198,7 +199,7 @@ fun SshListScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "No matching hosts or workspaces",
+                        text = language.text("没有匹配的主机或工作区", "No matching hosts or workspaces"),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.outline
                     )

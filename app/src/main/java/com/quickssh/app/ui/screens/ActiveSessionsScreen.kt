@@ -51,21 +51,22 @@ fun ActiveSessionsScreen(
     onReconnectSession: (String) -> Unit,
     onDisconnectSession: (String) -> Unit
 ) {
+    val language = LocalQuickSshLanguage.current
     var editingSession by remember { mutableStateOf<SshSessionInfo?>(null) }
     var editingName by remember { mutableStateOf("") }
 
     Scaffold(
         topBar = {
             QuickSshPageHeader(
-                title = "Sessions (${sessions.size})",
-                subtitle = "Background SSH sessions",
+                title = language.text("会话 (${sessions.size})", "Sessions (${sessions.size})"),
+                subtitle = language.text("后台 SSH 会话", "Background SSH sessions"),
                 navigationIcon = {
                     FeedbackTextButton(
                         onClick = onBackClicked,
                         colors = androidx.compose.material3.ButtonDefaults.textButtonColors(
                             contentColor = MaterialTheme.colorScheme.primary
                         )
-                    ) { Text("Back") }
+                    ) { Text(language.text("返回", "Back")) }
                 }
             )
         },
@@ -79,7 +80,7 @@ fun ActiveSessionsScreen(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "No background SSH sessions",
+                    text = language.text("没有后台 SSH 会话", "No background SSH sessions"),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.outline
                 )

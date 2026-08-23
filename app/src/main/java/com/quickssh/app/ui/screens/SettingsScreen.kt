@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.AlertDialog
@@ -41,6 +42,7 @@ import com.quickssh.app.R
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
+    language: AppLanguage,
     autoWrapEnabled: Boolean,
     privacyModeEnabled: Boolean,
     biometricUnlockEnabled: Boolean,
@@ -56,7 +58,8 @@ fun SettingsScreen(
     onStrictHostKeyVerificationChange: (Boolean) -> Unit,
     onChooseDownloadDirectory: () -> Unit,
     onExportConfigs: (String?) -> Unit,
-    onImportConfigs: (String?) -> Unit
+    onImportConfigs: (String?) -> Unit,
+    onLanguageChange: (AppLanguage) -> Unit
 ) {
     var showExportDialog by remember { mutableStateOf(false) }
     var showImportDialog by remember { mutableStateOf(false) }
@@ -66,8 +69,8 @@ fun SettingsScreen(
     Scaffold(
         topBar = {
             QuickSshPageHeader(
-                title = "Settings",
-                subtitle = "Security, terminal and backup preferences"
+                title = language.text("设置", "Settings"),
+                subtitle = language.text("安全、终端和备份偏好", "Security, terminal and backup preferences")
             )
         },
         bottomBar = bottomBar
@@ -80,28 +83,49 @@ fun SettingsScreen(
                 .padding(horizontal = 20.dp, vertical = 18.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = language.text("界面语言", "Interface language"),
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.weight(1f)
+                )
+                FilterChip(
+                    selected = language == AppLanguage.ZH,
+                    onClick = { onLanguageChange(AppLanguage.ZH) },
+                    label = { Text("中文") }
+                )
+                FilterChip(
+                    selected = language == AppLanguage.EN,
+                    onClick = { onLanguageChange(AppLanguage.EN) },
+                    label = { Text("English") }
+                )
+            }
             SettingsSwitchRow(
-                title = "Terminal auto wrap",
-                detail = "Turn off to scroll horizontally for long terminal lines.",
+                title = language.text("终端自动换行", "Terminal auto wrap"),
+                detail = language.text("关闭后，长终端行可横向滚动。", "Turn off to scroll horizontally for long terminal lines."),
                 checked = autoWrapEnabled,
                 onCheckedChange = onAutoWrapChange
             )
             SettingsSwitchRow(
-                title = "Privacy mode",
-                detail = "Block screenshots and app previews on sensitive screens.",
+                title = language.text("隐私模式", "Privacy mode"),
+                detail = language.text("阻止敏感页面截图和最近任务预览。", "Block screenshots and app previews on sensitive screens."),
                 checked = privacyModeEnabled,
                 onCheckedChange = onPrivacyModeChange
             )
             SettingsSwitchRow(
-                title = "Biometric unlock",
-                detail = if (biometricAvailable) "Require biometric confirmation before connecting or editing credentials." else "No biometric authenticator is available on this device.",
+                title = language.text("生物识别解锁", "Biometric unlock"),
+                detail = if (biometricAvailable) language.text("连接或编辑凭据前需要生物识别确认。", "Require biometric confirmation before connecting or editing credentials.") else language.text("此设备没有可用的生物识别器。", "No biometric authenticator is available on this device."),
                 checked = biometricUnlockEnabled,
                 enabled = biometricAvailable,
                 onCheckedChange = onBiometricUnlockChange
             )
             SettingsSwitchRow(
-                title = "Strict host-key verification",
-                detail = "Default stays automatic trust. Enable this to reject unknown or changed SSH host keys unless they are already trusted.",
+                title = language.text("严格主机密钥验证", "Strict host-key verification"),
+                detail = language.text("默认自动信任。开启后会拒绝未知或变化的 SSH 主机密钥。", "Default stays automatic trust. Enable this to reject unknown or changed SSH host keys unless they are already trusted."),
                 checked = strictHostKeyVerificationEnabled,
                 onCheckedChange = onStrictHostKeyVerificationChange
             )
@@ -112,7 +136,7 @@ fun SettingsScreen(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Download directory",
+                        text = language.text("下载目录", "Download directory"),
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onBackground
                     )
@@ -127,7 +151,7 @@ fun SettingsScreen(
                 }
                 Spacer(modifier = Modifier.width(16.dp))
                 FeedbackButton(onClick = onChooseDownloadDirectory) {
-                    Text("Choose")
+                    Text(language.text("选择", "Choose"))
                 }
             }
 
@@ -136,7 +160,7 @@ fun SettingsScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text(
-                    text = "Server backup",
+                    text = language.text("服务器备份", "Server backup"),
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onBackground
                 )
@@ -157,7 +181,7 @@ fun SettingsScreen(
                             contentDescription = null,
                             modifier = Modifier.size(18.dp)
                         )
-                        Text("Export", modifier = Modifier.padding(start = 8.dp))
+                        Text(language.text("导出", "Export"), modifier = Modifier.padding(start = 8.dp))
                     }
                     FeedbackButton(
                         onClick = {
@@ -171,7 +195,7 @@ fun SettingsScreen(
                             contentDescription = null,
                             modifier = Modifier.size(18.dp)
                         )
-                        Text("Import", modifier = Modifier.padding(start = 8.dp))
+                        Text(language.text("导入", "Import"), modifier = Modifier.padding(start = 8.dp))
                     }
                 }
                 if (backupStatusText.isNotBlank()) {
@@ -188,7 +212,7 @@ fun SettingsScreen(
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 Text(
-                    text = "About",
+                    text = language.text("关于", "About"),
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onBackground
                 )
@@ -218,10 +242,10 @@ fun SettingsScreen(
 
     if (showExportDialog) {
         BackupPasswordDialog(
-            title = "Export server backup",
-            detail = "Optional: enter a password to encrypt this backup, or leave it blank to export directly.",
+            title = language.text("导出服务器备份", "Export server backup"),
+            detail = language.text("可选：输入密码加密备份；留空则直接导出。", "Optional: enter a password to encrypt this backup, or leave it blank to export directly."),
             password = exportPassword,
-            confirmText = "Export",
+            confirmText = language.text("导出", "Export"),
             onPasswordChange = { exportPassword = it },
             onConfirm = {
                 showExportDialog = false
@@ -233,10 +257,10 @@ fun SettingsScreen(
 
     if (showImportDialog) {
         BackupPasswordDialog(
-            title = "Import server backup",
-            detail = "Enter the backup password if the file is protected. Leave blank for older or unprotected backups.",
+            title = language.text("导入服务器备份", "Import server backup"),
+            detail = language.text("如果备份受保护，请输入密码；旧版或未加密备份可留空。", "Enter the backup password if the file is protected. Leave blank for older or unprotected backups."),
             password = importPassword,
-            confirmText = "Import",
+            confirmText = language.text("导入", "Import"),
             onPasswordChange = { importPassword = it },
             onConfirm = {
                 showImportDialog = false
@@ -257,6 +281,7 @@ private fun BackupPasswordDialog(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    val language = LocalQuickSshLanguage.current
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
@@ -270,7 +295,7 @@ private fun BackupPasswordDialog(
                 OutlinedTextField(
                     value = password,
                     onValueChange = onPasswordChange,
-                    label = { Text("Backup password") },
+                    label = { Text(language.text("备份密码", "Backup password")) },
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                     modifier = Modifier.fillMaxWidth()
@@ -284,7 +309,7 @@ private fun BackupPasswordDialog(
         },
         dismissButton = {
             FeedbackTextButton(onClick = onDismiss) {
-                Text("Cancel")
+                Text(language.text("取消", "Cancel"))
             }
         }
     )

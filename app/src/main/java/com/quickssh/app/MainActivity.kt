@@ -39,6 +39,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
@@ -82,6 +83,8 @@ import com.quickssh.app.service.TunnelForegroundService
 import com.quickssh.app.service.TunnelStatus
 import com.quickssh.app.service.terminalQuickUploadDirectory
 import com.quickssh.app.ui.screens.ActiveSessionsScreen
+import com.quickssh.app.ui.screens.AppLanguage
+import com.quickssh.app.ui.screens.LocalQuickSshLanguage
 import com.quickssh.app.ui.screens.QuickSshBottomBar
 import com.quickssh.app.ui.screens.SettingsScreen
 import com.quickssh.app.ui.screens.SshAddScreen
@@ -357,6 +360,7 @@ private const val REMOTE_DOWNLOAD_CONFIRM_FILE_THRESHOLD = 200
 private const val REMOTE_DOWNLOAD_CONFIRM_DIRECTORY_THRESHOLD = 50
 
 class MainActivity : FragmentActivity() {
+    private var uiLanguage by mutableStateOf(AppLanguage.ZH)
 
     private lateinit var mainExecutor: Executor
 
@@ -433,14 +437,20 @@ class MainActivity : FragmentActivity() {
         }
 
         mainExecutor = ContextCompat.getMainExecutor(this)
+        uiLanguage = AppLanguage.fromCode(
+            getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getString(KEY_LANGUAGE, AppLanguage.ZH.code)
+        )
 
         setContent {
             QuickSshTheme(dynamicColor = false) {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
-                ) {
-                    AppNavigation()
+                CompositionLocalProvider(LocalQuickSshLanguage provides uiLanguage) {
+                    Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = MaterialTheme.colorScheme.background
+                    ) {
+                        AppNavigation()
+                    }
                 }
             }
         }
@@ -1555,6 +1565,7 @@ class MainActivity : FragmentActivity() {
             }
             "SETTINGS" -> {
                 SettingsScreen(
+                    language = uiLanguage,
                     autoWrapEnabled = autoWrapEnabled,
                     privacyModeEnabled = privacyModeEnabled,
                     biometricUnlockEnabled = biometricUnlockEnabled,
@@ -1626,6 +1637,10 @@ class MainActivity : FragmentActivity() {
                             configBackupStatus = "Import failed: ${error.localizedMessage ?: error.javaClass.simpleName}"
                             pendingImportBackupPassword = null
                         }
+                    },
+                    onLanguageChange = { language ->
+                        uiLanguage = language
+                        settings.edit().putString(KEY_LANGUAGE, language.code).apply()
                     }
                 )
             }
@@ -3058,6 +3073,7 @@ class MainActivity : FragmentActivity() {
 
     private companion object {
         const val PREFS_NAME = "quickssh_settings"
+        const val KEY_LANGUAGE = "ui_language"
         const val KEY_TERMINAL_AUTO_WRAP = "terminal_auto_wrap"
         const val KEY_PRIVACY_MODE = "privacy_mode"
         const val KEY_BIOMETRIC_UNLOCK = "biometric_unlock"

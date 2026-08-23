@@ -49,8 +49,8 @@ fun QuickSshBottomBar(
             selected = selectedTab == "LIST",
             onClick = onHomeClicked,
             icon = Icons.Default.Home,
-            contentDescription = "主机",
-            label = "主机"
+            contentDescription = LocalQuickSshLanguage.current.text("主机", "Hosts"),
+            label = LocalQuickSshLanguage.current.text("主机", "Hosts")
         )
         val sessionsInteractionSource = remember { MutableInteractionSource() }
         val sessionsPressed by sessionsInteractionSource.collectIsPressedAsState()
@@ -78,17 +78,17 @@ fun QuickSshBottomBar(
                         }
                     }
                 ) {
-                    Icon(imageVector = Icons.Default.List, contentDescription = "会话")
+                    Icon(imageVector = Icons.Default.List, contentDescription = LocalQuickSshLanguage.current.text("会话", "Sessions"))
                 }
             },
-            label = { Text("会话") }
+            label = { Text(LocalQuickSshLanguage.current.text("会话", "Sessions")) }
         )
         QuickSshNavItem(
             selected = selectedTab == "TRANSFER",
             onClick = onTransferClicked,
             icon = Icons.Default.Send,
-            contentDescription = "传输",
-            label = "传输"
+            contentDescription = LocalQuickSshLanguage.current.text("传输", "Transfers"),
+            label = LocalQuickSshLanguage.current.text("传输", "Transfers")
         )
         val tunnelsInteractionSource = remember { MutableInteractionSource() }
         val tunnelsPressed by tunnelsInteractionSource.collectIsPressedAsState()
@@ -116,17 +116,17 @@ fun QuickSshBottomBar(
                         }
                     }
                 ) {
-                    Icon(painter = painterResource(R.drawable.ic_link), contentDescription = "隧道")
+                    Icon(painter = painterResource(R.drawable.ic_link), contentDescription = LocalQuickSshLanguage.current.text("隧道", "Tunnels"))
                 }
             },
-            label = { Text("隧道") }
+            label = { Text(LocalQuickSshLanguage.current.text("隧道", "Tunnels")) }
         )
         QuickSshNavItem(
             selected = selectedTab == "SETTINGS",
             onClick = onSettingsClicked,
             icon = Icons.Default.Settings,
-            contentDescription = "设置",
-            label = "设置"
+            contentDescription = LocalQuickSshLanguage.current.text("设置", "Settings"),
+            label = LocalQuickSshLanguage.current.text("设置", "Settings")
         )
     }
 }
