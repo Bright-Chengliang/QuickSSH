@@ -10,6 +10,15 @@
 
 QuickSSH is a native Android SSH client built around real remote-development workflows: persistent shell sessions, SFTP file operations, and access to private services through SSH tunnels. It uses Jetpack Compose for the UI, SSHJ for SSH/SFTP, Room for local persistence, and Android Keystore for credential protection.
 
+## Screenshots
+
+<p align="center">
+  <img src="docs/screenshots/home-en.png" alt="QuickSSH hosts" width="30%" />
+  <img src="docs/screenshots/transfer-en.png" alt="QuickSSH file transfers" width="30%" />
+  <img src="docs/screenshots/settings-en.png" alt="QuickSSH settings" width="30%" />
+</p>
+<p align="center"><sub>Hosts · File transfers · Settings</sub></p>
+
 ## Why this project
 
 Mobile SSH tools often stop at “connect and type commands”. In practice, developers also need to switch between project workspaces, keep long-running sessions alive, move files with recoverable progress, and reach services that should remain private. QuickSSH brings these workflows into one explicit, testable local workspace.

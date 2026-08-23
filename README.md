@@ -10,6 +10,15 @@
 
 QuickSSH 是一款面向 Android 的 SSH 客户端，将服务器配置、多工作区、终端、文件传输和 SSH 隧道整合在一个应用中。它使用 Jetpack Compose 构建界面，通过 SSHJ 建立 SSH/SFTP 连接，并用 Android Keystore 加密保存在设备本地的密码和私钥。
 
+## 应用截图
+
+<p align="center">
+  <img src="docs/screenshots/home.png" alt="QuickSSH 主页" width="30%" />
+  <img src="docs/screenshots/transfer.png" alt="QuickSSH 文件传输" width="30%" />
+  <img src="docs/screenshots/settings.png" alt="QuickSSH 设置" width="30%" />
+</p>
+<p align="center"><sub>主页 · 文件传输 · 设置</sub></p>
+
 Developed by [Bright-Chengliang](https://github.com/Bright-Chengliang) · © 2026 Chengliang Liu · [MIT License](LICENSE)
 
 ## 项目定位
