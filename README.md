@@ -55,7 +55,7 @@ Developed by [Bright-Chengliang](https://github.com/Bright-Chengliang) · © 202
 **设计动机：** 在手机 SSH 中启动 Codex 等具有文件读取能力的 agent 时，真正麻烦的不是把文件传到服务器，而是上传后还要手动查找远端路径，再切回终端输入。只要把文件路径交给 agent，它就可以根据路径读取和分析文件；这个上传、查找、回填的过程在触屏设备上尤其繁琐。
 **具体实现：** 终端输入栏提供独立的文件上传入口。选中的文件会通过当前 SSH 会话上传到当前工作区的 `.QuickSSH/upload` 目录；上传完成后，应用会将远端文件路径自动以 shell 安全格式回填到终端输入框，用户可以直接把路径交给 agent 读取和分析。上传进度、成功路径和失败状态会同步到传输历史。
 
-<p align="center"><img src="docs/screenshots/terminal.png" alt="QuickSSH 终端与文件上传入口" width="48%" /></p>
+<p align="center"><img src="docs/screenshots/terminal-path-inserted.jpg" alt="QuickSSH 终端内上传完成后的路径自动回填" width="48%" /></p>
 
 ### 5. SSH 隧道与移动端内网访问
 

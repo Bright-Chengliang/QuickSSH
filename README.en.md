@@ -53,7 +53,7 @@ Mobile SSH tools often stop at “connect and type commands”. In practice, dev
 **Motivation:** When running Codex or another capable agent through SSH on a phone, uploading the file is only half the problem. The agent can read and analyze a file once it receives the remote path, but manually locating that path and switching back to the terminal is tedious and especially awkward on a touch screen.
 **Implementation:** The terminal input bar has a dedicated upload action. Selected files are uploaded through the active SSH session into the current workspace's `.QuickSSH/upload` directory. After the transfer completes, QuickSSH inserts shell-safe remote paths directly into the terminal input field, ready to be given to the agent for reading and analysis. Progress, successful paths, and failures remain visible in transfer history.
 
-<p align="center"><img src="docs/screenshots/terminal-en.png" alt="QuickSSH terminal and file-upload entry point" width="48%" /></p>
+<p align="center"><img src="docs/screenshots/terminal-path-inserted.jpg" alt="QuickSSH terminal upload with the inserted remote path" width="48%" /></p>
 
 ### SSH tunnels for private services
 
