@@ -118,6 +118,7 @@ fun TransferScreen(
     onTaskClicked: (TransferTaskUiState) -> Unit,
     onTaskDeleted: (TransferTaskUiState) -> Unit
 ) {
+    val language = LocalQuickSshLanguage.current
     Scaffold(
         topBar = {
             TransferProgressTopBar(
@@ -138,12 +139,12 @@ fun TransferScreen(
         ) {
             ServerSelector(configs, selectedConfig, onConfigSelected)
 
-            TransferSection(title = "下载") {
+            TransferSection(title = language.text("下载", "Download")) {
                 OutlinedTextField(
                     value = downloadRemotePath,
                     onValueChange = onDownloadRemotePathChange,
-                    label = { Text("下载远端路径") },
-                    placeholder = { Text(selectedConfig?.workDirectory ?: "默认使用 SSH 登录目录") },
+                    label = { Text(language.text("下载远端路径", "Remote path to download")) },
+                    placeholder = { Text(selectedConfig?.workDirectory ?: language.text("默认使用 SSH 登录目录", "Defaults to the SSH login directory")) },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
                 )
@@ -152,20 +153,20 @@ fun TransferScreen(
                         onClick = onBrowseRemote,
                         enabled = selectedConfig != null && !isTransferring && !isBrowsingRemote,
                         modifier = Modifier.weight(1f),
-                        text = if (isBrowsingRemote) "读取中" else "浏览远端"
+                        text = if (isBrowsingRemote) language.text("读取中", "Loading") else language.text("浏览远端", "Browse remote")
                     )
                     ResponsiveOutlinedButton(
                         onClick = onRemoteParentClicked,
                         enabled = selectedConfig != null && !isTransferring,
                         modifier = Modifier.weight(1f),
-                        text = "上级目录"
+                        text = language.text("上级目录", "Parent directory")
                     )
                 }
                 ResponsiveOutlinedButton(
                     onClick = onChooseDownloadDirectory,
                     enabled = !isTransferring,
                     modifier = Modifier.fillMaxWidth(),
-                    text = transferDownloadDirectoryActionLabel(downloadDirectoryLabel)
+                    text = transferDownloadDirectoryActionLabel(downloadDirectoryLabel, language)
                 )
                 RemoteBrowser(
                     entries = remoteEntries,
@@ -183,7 +184,7 @@ fun TransferScreen(
                     onCancelDownloadPlan = onCancelRemoteDownloadPlan
                 )
                 UploadConflictPolicySelector(
-                    title = "下载冲突处理",
+                    title = language.text("下载冲突处理", "Download conflict policy"),
                     selectedPolicy = downloadConflictPolicy,
                     enabled = !isTransferring,
                     onPolicySelected = onDownloadConflictPolicyChange
@@ -192,7 +193,7 @@ fun TransferScreen(
                     onClick = onDownloadClicked,
                     enabled = selectedConfig != null && downloadRemotePath.isNotBlank() && !isTransferring,
                     modifier = Modifier.fillMaxWidth(),
-                    text = "下载"
+                    text = language.text("下载", "Download")
                 )
             }
 
@@ -203,12 +204,12 @@ fun TransferScreen(
                     .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.24f))
             )
 
-            TransferSection(title = "上传") {
+            TransferSection(title = language.text("上传", "Upload")) {
                 OutlinedTextField(
                     value = uploadRemotePath,
                     onValueChange = onUploadRemotePathChange,
-                    label = { Text("上传目标路径") },
-                    placeholder = { Text(selectedConfig?.workDirectory ?: "默认使用 SSH 登录目录") },
+                    label = { Text(language.text("上传目标路径", "Remote upload destination")) },
+                    placeholder = { Text(selectedConfig?.workDirectory ?: language.text("默认使用 SSH 登录目录", "Defaults to the SSH login directory")) },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
                 )
@@ -216,10 +217,10 @@ fun TransferScreen(
                     onClick = onPickLocalFile,
                     enabled = !isTransferring,
                     modifier = Modifier.fillMaxWidth(),
-                    text = selectedLocalFilesLabel(selectedLocalUris)
+                    text = selectedLocalFilesLabel(selectedLocalUris, language)
                 )
                 UploadConflictPolicySelector(
-                    title = "上传冲突处理",
+                    title = language.text("上传冲突处理", "Upload conflict policy"),
                     selectedPolicy = uploadConflictPolicy,
                     enabled = !isTransferring,
                     onPolicySelected = onUploadConflictPolicyChange
@@ -228,7 +229,7 @@ fun TransferScreen(
                     onClick = onUploadClicked,
                     enabled = selectedConfig != null && selectedLocalUris.isNotEmpty() && !isTransferring,
                     modifier = Modifier.fillMaxWidth(),
-                    text = "上传"
+                    text = language.text("上传", "Upload")
                 )
             }
 
@@ -255,15 +256,15 @@ fun TransferScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = if (queuePaused) "队列已暂停：$queuedCount 个等待" else "队列：$queuedCount 个等待",
+                        text = if (queuePaused) language.text("队列已暂停：$queuedCount 个等待", "Queue paused: $queuedCount waiting") else language.text("队列：$queuedCount 个等待", "Queue: $queuedCount waiting"),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.outline,
                         modifier = Modifier.weight(1f)
                     )
                     FeedbackTextButton(onClick = if (queuePaused) onResumeQueue else onPauseQueue) {
-                        Text(if (queuePaused) "继续" else "暂停")
+                        Text(if (queuePaused) language.text("继续", "Resume") else language.text("暂停", "Pause"))
                     }
-                    FeedbackTextButton(onClick = onClearQueue, enabled = queuedCount > 0) { Text("取消等待") }
+                    FeedbackTextButton(onClick = onClearQueue, enabled = queuedCount > 0) { Text(language.text("取消等待", "Clear queue")) }
                 }
             }
 
@@ -295,7 +296,7 @@ fun TransferScreen(
                                 recentTasksPage = 0
                             }
                         ) {
-                            Text(if (recentTasksExpanded) "收起" else "展开")
+                            Text(if (recentTasksExpanded) language.text("收起", "Collapse") else language.text("展开", "Expand"))
                         }
                     }
                 }
@@ -305,7 +306,8 @@ fun TransferScreen(
                         totalTaskCount = tasks.size,
                         visibleTaskCount = visibleTasks.size,
                         expanded = recentTasksExpanded,
-                        pageIndex = currentPage
+                        pageIndex = currentPage,
+                        language = language
                     ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.outline
@@ -335,13 +337,13 @@ fun TransferScreen(
                             enabled = currentPage > 0,
                             onClick = { recentTasksPage = (currentPage - 1).coerceAtLeast(0) }
                         ) {
-                            Text("上一页")
+                            Text(language.text("上一页", "Previous"))
                         }
                         FeedbackTextButton(
                             enabled = currentPage < pageCount - 1,
                             onClick = { recentTasksPage = (currentPage + 1).coerceAtMost(pageCount - 1) }
                         ) {
-                            Text("下一页")
+                            Text(language.text("下一页", "Next"))
                         }
                     }
                 }
@@ -352,20 +354,23 @@ fun TransferScreen(
     if (showRemoteDownloadPlanSlowWarning) {
         AlertDialog(
             onDismissRequest = onKeepPreparingRemoteDownloadPlan,
-            title = { Text("下载计划耗时较久") },
+            title = { Text(language.text("下载计划耗时较久", "Download planning is taking a while")) },
             text = {
                 Text(
-                    "创建下载计划已等待 ${formatElapsedSeconds(remoteDownloadPlanElapsedSeconds)}，目录可能过大或网络响应较慢。可以取消后减少下载范围，或继续等待。"
+                    language.text(
+                        "创建下载计划已等待 ${formatElapsedSeconds(remoteDownloadPlanElapsedSeconds)}，目录可能过大或网络响应较慢。可以取消后减少下载范围，或继续等待。",
+                        "Download planning has waited ${formatElapsedSeconds(remoteDownloadPlanElapsedSeconds, language)}. The directory may be large or the network may be slow. Cancel to narrow the scope, or keep waiting."
+                    )
                 )
             },
             confirmButton = {
                 FeedbackTextButton(onClick = onKeepPreparingRemoteDownloadPlan) {
-                    Text("继续等待")
+                    Text(language.text("继续等待", "Keep waiting"))
                 }
             },
             dismissButton = {
                 FeedbackTextButton(onClick = onCancelRemoteDownloadPlan) {
-                    Text("取消计划")
+                    Text(language.text("取消计划", "Cancel plan"))
                 }
             }
         )
@@ -374,20 +379,23 @@ fun TransferScreen(
     if (remoteDownloadPlanConfirmation != null) {
         AlertDialog(
             onDismissRequest = onCancelPendingRemoteDownloadPlan,
-            title = { Text("确认大目录下载") },
+            title = { Text(language.text("确认大目录下载", "Confirm large directory download")) },
             text = {
                 Text(
-                    "已扫描到 ${remoteDownloadPlanConfirmation.fileCount} 个文件、${remoteDownloadPlanConfirmation.directoryCount} 个文件夹。继续后会创建本地目录树并把文件加入下载队列；如果数量不符合预期，可以取消后缩小下载范围。"
+                    language.text(
+                        "已扫描到 ${remoteDownloadPlanConfirmation.fileCount} 个文件、${remoteDownloadPlanConfirmation.directoryCount} 个文件夹。继续后会创建本地目录树并把文件加入下载队列；如果数量不符合预期，可以取消后缩小下载范围。",
+                        "Scanned ${remoteDownloadPlanConfirmation.fileCount} files and ${remoteDownloadPlanConfirmation.directoryCount} folders. Continuing will create the local directory tree and queue the files; cancel to narrow the scope if the count is unexpected."
+                    )
                 )
             },
             confirmButton = {
                 FeedbackTextButton(onClick = onConfirmRemoteDownloadPlan) {
-                    Text("继续下载")
+                    Text(language.text("继续下载", "Continue download"))
                 }
             },
             dismissButton = {
                 FeedbackTextButton(onClick = onCancelPendingRemoteDownloadPlan) {
-                    Text("取消")
+                    Text(language.text("取消", "Cancel"))
                 }
             }
         )
@@ -466,6 +474,7 @@ private fun UploadConflictPolicySelector(
     enabled: Boolean,
     onPolicySelected: (FileTransferHelper.UploadConflictPolicy) -> Unit
 ) {
+    val language = LocalQuickSshLanguage.current
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(
             text = title,
@@ -481,7 +490,7 @@ private fun UploadConflictPolicySelector(
                     selected = selectedPolicy == policy,
                     onClick = { onPolicySelected(policy) },
                     enabled = enabled,
-                    label = { Text(transferConflictPolicyLabel(policy), maxLines = 1) }
+                    label = { Text(transferConflictPolicyLabel(policy, language), maxLines = 1) }
                 )
             }
         }
@@ -519,6 +528,7 @@ private fun TransferTaskRow(
     onTaskClicked: (TransferTaskUiState) -> Unit,
     onTaskDeleted: (TransferTaskUiState) -> Unit
 ) {
+    val language = LocalQuickSshLanguage.current
     var showActions by remember { mutableStateOf(false) }
     val actionable = task.id > 0L
     Column(
@@ -558,16 +568,16 @@ private fun TransferTaskRow(
     if (showActions) {
         AlertDialog(
             onDismissRequest = { showActions = false },
-            title = { Text("\u4efb\u52a1\u5c5e\u6027") },
+            title = { Text(language.text("\u4efb\u52a1\u5c5e\u6027", "Task details")) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("\u6587\u4ef6\uff1a${task.fileName}")
-                    Text("\u65b9\u5411\uff1a${task.direction}")
-                    Text("\u670d\u52a1\u5668\uff1a${task.serverNodeName}")
-                    Text("\u5de5\u4f5c\u533a\uff1a${task.workspaceName}")
-                    Text("\u72b6\u6001\uff1a${task.status}")
-                    if (task.remotePath.isNotBlank()) Text("\u8fdc\u7aef\uff1a${task.remotePath}")
-                    task.localUri?.let { Text("\u672c\u5730\uff1a$it") }
+                    Text(language.text("\u6587\u4ef6\uff1a${task.fileName}", "File: ${task.fileName}"))
+                    Text(language.text("\u65b9\u5411\uff1a${task.direction}", "Direction: ${task.direction}"))
+                    Text(language.text("\u670d\u52a1\u5668\uff1a${task.serverNodeName}", "Server: ${task.serverNodeName}"))
+                    Text(language.text("\u5de5\u4f5c\u533a\uff1a${task.workspaceName}", "Workspace: ${task.workspaceName}"))
+                    Text(language.text("\u72b6\u6001\uff1a${task.status}", "Status: ${task.status}"))
+                    if (task.remotePath.isNotBlank()) Text(language.text("\u8fdc\u7aef\uff1a${task.remotePath}", "Remote: ${task.remotePath}"))
+                    task.localUri?.let { Text(language.text("\u672c\u5730\uff1a$it", "Local: $it")) }
                     if (task.detail.isNotBlank()) Text(task.detail)
                 }
             },
@@ -575,7 +585,7 @@ private fun TransferTaskRow(
                 FeedbackTextButton(onClick = {
                     showActions = false
                     if (actionable) onTaskClicked(task)
-                }) { Text(if (actionable) "\u6253\u5f00" else "\u5173\u95ed") }
+                }) { Text(if (actionable) language.text("\u6253\u5f00", "Open") else language.text("\u5173\u95ed", "Close")) }
             },
             dismissButton = {
                 if (actionable) {
@@ -583,8 +593,8 @@ private fun TransferTaskRow(
                         FeedbackTextButton(onClick = {
                             showActions = false
                             onTaskDeleted(task)
-                        }) { Text("\u5220\u9664\u8bb0\u5f55") }
-                        FeedbackTextButton(onClick = { showActions = false }) { Text("\u5173\u95ed") }
+                        }) { Text(language.text("\u5220\u9664\u8bb0\u5f55", "Delete record")) }
+                        FeedbackTextButton(onClick = { showActions = false }) { Text(language.text("\u5173\u95ed", "Close")) }
                     }
                 }
             }
@@ -609,6 +619,7 @@ private fun RemoteBrowser(
     onDownloadSelected: () -> Unit,
     onCancelDownloadPlan: () -> Unit
 ) {
+    val language = LocalQuickSshLanguage.current
     if (status.isNotBlank()) {
         Text(text = status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
     }
@@ -621,16 +632,16 @@ private fun RemoteBrowser(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = if (selectedCount == 0) "多选模式" else "已选择 $selectedCount 项",
+                text = if (selectedCount == 0) language.text("多选模式", "Multi-select mode") else language.text("已选择 $selectedCount 项", "$selectedCount selected"),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.outline,
                 modifier = Modifier.weight(1f)
             )
             FeedbackTextButton(onClick = onDownloadSelected, enabled = selectedCount > 0) {
-                Text("下载选中")
+                Text(language.text("下载选中", "Download selected"))
             }
             FeedbackTextButton(onClick = onSelectionCleared, enabled = selectedCount > 0 || multiSelectEnabled) {
-                Text("清除")
+                Text(language.text("清除", "Clear"))
             }
         }
     }
@@ -642,13 +653,13 @@ private fun RemoteBrowser(
         ) {
             CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
             Text(
-                text = "正在创建下载计划，已等待 ${formatElapsedSeconds(downloadPlanElapsedSeconds)}",
+                text = language.text("正在创建下载计划，已等待 ${formatElapsedSeconds(downloadPlanElapsedSeconds)}", "Preparing download plan for ${formatElapsedSeconds(downloadPlanElapsedSeconds, language)}"),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.outline,
                 modifier = Modifier.weight(1f)
             )
             FeedbackTextButton(onClick = onCancelDownloadPlan) {
-                Text("取消")
+                Text(language.text("取消", "Cancel"))
             }
         }
     }
@@ -758,6 +769,7 @@ private fun RemoteBrowserPagingControls(
     onPreviousPage: () -> Unit,
     onNextPage: () -> Unit
 ) {
+    val language = LocalQuickSshLanguage.current
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -775,7 +787,7 @@ private fun RemoteBrowserPagingControls(
             modifier = Modifier.weight(1f)
         )
         FeedbackTextButton(onClick = { onExpandedChange(!expanded) }) {
-            Text(if (expanded) "收起" else "展开")
+            Text(if (expanded) language.text("收起", "Collapse") else language.text("展开", "Expand"))
         }
     }
 
@@ -795,13 +807,13 @@ private fun RemoteBrowserPagingControls(
                 enabled = pageIndex > 0,
                 onClick = onPreviousPage
             ) {
-                Text("上一页")
+                Text(language.text("上一页", "Previous"))
             }
             FeedbackTextButton(
                 enabled = pageIndex < pageCount - 1,
                 onClick = onNextPage
             ) {
-                Text("下一页")
+                Text(language.text("下一页", "Next"))
             }
         }
     }
@@ -817,6 +829,7 @@ private fun RemoteEntryMenuDialog(
     onOpenDirectoryClicked: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    val language = LocalQuickSshLanguage.current
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
@@ -825,34 +838,35 @@ private fun RemoteEntryMenuDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 FeedbackTextButton(onClick = onSelectClicked, modifier = Modifier.fillMaxWidth()) {
-                    Text(if (selected) "取消选择" else "选中此项")
+                    Text(if (selected) language.text("取消选择", "Deselect") else language.text("选中此项", "Select"))
                 }
                 FeedbackTextButton(onClick = onMultiSelectClicked, modifier = Modifier.fillMaxWidth()) {
-                    Text(if (multiSelectEnabled) "加入/移出多选" else "多选")
+                    Text(if (multiSelectEnabled) language.text("加入/移出多选", "Toggle multi-select") else language.text("多选", "Multi-select"))
                 }
                 if (entry.isDirectory) {
                     FeedbackTextButton(onClick = onOpenDirectoryClicked, modifier = Modifier.fillMaxWidth()) {
-                        Text("进入文件夹")
+                        Text(language.text("进入文件夹", "Open folder"))
                     }
                 }
             }
         },
         confirmButton = {
-            FeedbackTextButton(onClick = onDismiss) { Text("关闭") }
+            FeedbackTextButton(onClick = onDismiss) { Text(language.text("关闭", "Close")) }
         }
     )
 }
 
 @Composable
 private fun ServerSelector(configs: List<SshConfig>, selectedConfig: SshConfig?, onConfigSelected: (SshConfig) -> Unit) {
+    val language = LocalQuickSshLanguage.current
     var expanded by remember { mutableStateOf(false) }
     val groups by remember(configs) { derivedStateOf { groupedSshServers(configs) } }
     Box(modifier = Modifier.fillMaxWidth()) {
         ResponsiveOutlinedButton(
             onClick = { expanded = true },
             modifier = Modifier.fillMaxWidth(),
-            text = selectedConfig?.transferContextLabel() ?: "\u9009\u62e9\u670d\u52a1\u5668 / \u5de5\u4f5c\u533a",
-            trailingIcon = { Icon(imageVector = Icons.Default.KeyboardArrowDown, contentDescription = "\u5c55\u5f00") }
+            text = selectedConfig?.transferContextLabel() ?: language.text("\u9009\u62e9\u670d\u52a1\u5668 / \u5de5\u4f5c\u533a", "Select server / workspace"),
+            trailingIcon = { Icon(imageVector = Icons.Default.KeyboardArrowDown, contentDescription = language.text("\u5c55\u5f00", "Expand")) }
         )
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             groups.forEach { group ->
@@ -872,7 +886,7 @@ private fun ServerSelector(configs: List<SshConfig>, selectedConfig: SshConfig?,
                 }
             }
             if (configs.isEmpty()) {
-                DropdownMenuItem(text = { Text("\u6682\u65e0\u670d\u52a1\u5668\u914d\u7f6e") }, onClick = { expanded = false })
+                DropdownMenuItem(text = { Text(language.text("\u6682\u65e0\u670d\u52a1\u5668\u914d\u7f6e", "No server profiles")) }, onClick = { expanded = false })
             }
         }
     }
@@ -939,19 +953,23 @@ internal fun uploadConflictPolicyLabel(policy: FileTransferHelper.UploadConflict
 }
 
 internal fun transferConflictPolicyLabel(policy: FileTransferHelper.UploadConflictPolicy): String {
+    return transferConflictPolicyLabel(policy, AppLanguage.ZH)
+}
+
+internal fun transferConflictPolicyLabel(policy: FileTransferHelper.UploadConflictPolicy, language: AppLanguage): String {
     return when (policy) {
-        FileTransferHelper.UploadConflictPolicy.RENAME -> "自动改名"
-        FileTransferHelper.UploadConflictPolicy.OVERWRITE -> "覆盖"
-        FileTransferHelper.UploadConflictPolicy.FAIL -> "失败"
+        FileTransferHelper.UploadConflictPolicy.RENAME -> language.text("自动改名", "Auto-rename")
+        FileTransferHelper.UploadConflictPolicy.OVERWRITE -> language.text("覆盖", "Overwrite")
+        FileTransferHelper.UploadConflictPolicy.FAIL -> language.text("失败", "Fail")
     }
 }
 
-internal fun transferDownloadDirectoryActionLabel(downloadDirectoryLabel: String): String {
+internal fun transferDownloadDirectoryActionLabel(downloadDirectoryLabel: String, language: AppLanguage = AppLanguage.ZH): String {
     val label = downloadDirectoryLabel.trim()
     return if (label.isBlank() || label.startsWith("Not set", ignoreCase = true)) {
-        "选择保存目录"
+        language.text("选择保存目录", "Choose save directory")
     } else {
-        "保存到：$label"
+        language.text("保存到：$label", "Save to: $label")
     }
 }
 
@@ -976,14 +994,21 @@ internal fun recentTransferTaskRangeLabel(
     totalTaskCount: Int,
     visibleTaskCount: Int,
     expanded: Boolean,
-    pageIndex: Int
+    pageIndex: Int,
+    language: AppLanguage = AppLanguage.ZH
 ): String {
-    if (totalTaskCount <= 0) return "暂无任务"
-    if (!expanded) return "显示最近 ${visibleTaskCount.coerceAtMost(totalTaskCount)} / $totalTaskCount 个任务"
+    if (totalTaskCount <= 0) return language.text("暂无任务", "No tasks")
+    if (!expanded) return language.text(
+        "显示最近 ${visibleTaskCount.coerceAtMost(totalTaskCount)} / $totalTaskCount 个任务",
+        "Showing the latest ${visibleTaskCount.coerceAtMost(totalTaskCount)} / $totalTaskCount tasks"
+    )
     val safePage = pageIndex.coerceIn(0, recentTransferTaskPageCount(totalTaskCount) - 1)
     val start = safePage * RECENT_TRANSFER_TASK_PAGE_SIZE + 1
     val end = (start + visibleTaskCount - 1).coerceAtMost(totalTaskCount)
-    return "显示第 $start-$end / $totalTaskCount 个任务"
+    return language.text(
+        "显示第 $start-$end / $totalTaskCount 个任务",
+        "Showing $start-$end / $totalTaskCount tasks"
+    )
 }
 
 internal fun transferTopProgressMode(
@@ -1113,22 +1138,27 @@ internal fun selectedLocalFilesLabel(uris: List<Uri>): String {
     return selectedLocalFilesLabel(uris.size, singleLabel)
 }
 
-internal fun selectedLocalFilesLabel(fileCount: Int, singleFileLabel: String?): String {
+internal fun selectedLocalFilesLabel(uris: List<Uri>, language: AppLanguage): String {
+    val singleLabel = uris.firstOrNull()?.lastPathSegment?.substringAfterLast('/')
+    return selectedLocalFilesLabel(uris.size, singleLabel, language)
+}
+
+internal fun selectedLocalFilesLabel(fileCount: Int, singleFileLabel: String?, language: AppLanguage = AppLanguage.ZH): String {
     return when (fileCount) {
-        0 -> "\u9009\u62e9\u672c\u673a\u6587\u4ef6"
-        1 -> singleFileLabel?.takeIf { it.isNotBlank() } ?: "\u5df2\u9009\u62e9 1 \u4e2a\u6587\u4ef6"
-        else -> "\u5df2\u9009\u62e9 $fileCount \u4e2a\u6587\u4ef6"
+        0 -> language.text("\u9009\u62e9\u672c\u673a\u6587\u4ef6", "Choose local file")
+        1 -> singleFileLabel?.takeIf { it.isNotBlank() } ?: language.text("\u5df2\u9009\u62e9 1 \u4e2a\u6587\u4ef6", "1 file selected")
+        else -> language.text("\u5df2\u9009\u62e9 $fileCount \u4e2a\u6587\u4ef6", "$fileCount files selected")
     }
 }
 
-internal fun formatElapsedSeconds(seconds: Long): String {
+internal fun formatElapsedSeconds(seconds: Long, language: AppLanguage = AppLanguage.ZH): String {
     val safeSeconds = seconds.coerceAtLeast(0L)
     val minutes = safeSeconds / 60L
     val remainder = safeSeconds % 60L
     return if (minutes == 0L) {
-        "${remainder}秒"
+        language.text("${remainder}秒", "${remainder}s")
     } else {
-        "${minutes}分${remainder}秒"
+        language.text("${minutes}分${remainder}秒", "${minutes}m ${remainder}s")
     }
 }
 

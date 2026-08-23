@@ -13,11 +13,18 @@ QuickSSH is a native Android SSH client built around real remote-development wor
 ## Screenshots
 
 <p align="center">
-  <img src="docs/screenshots/home-en.png" alt="QuickSSH hosts" width="30%" />
-  <img src="docs/screenshots/transfer-en.png" alt="QuickSSH file transfers" width="30%" />
-  <img src="docs/screenshots/settings-en.png" alt="QuickSSH settings" width="30%" />
+  <img src="docs/screenshots/home-en.png" alt="QuickSSH multi-workspace hosts" width="45%" />
+  <img src="docs/screenshots/transfer-en.png" alt="QuickSSH transfer history and status" width="45%" />
 </p>
-<p align="center"><sub>Hosts · File transfers · Settings</sub></p>
+<p align="center">
+  <img src="docs/screenshots/terminal-en.png" alt="QuickSSH persistent terminal and controls" width="45%" />
+  <img src="docs/screenshots/sessions-en.png" alt="QuickSSH background SSH sessions" width="45%" />
+</p>
+<p align="center">
+  <img src="docs/screenshots/tunnel-en.png" alt="QuickSSH SSH tunnel presets" width="45%" />
+  <img src="docs/screenshots/settings-en.png" alt="QuickSSH security and bilingual settings" width="45%" />
+</p>
+<p align="center"><sub>Multi-workspace hosts · Observable transfers · Persistent terminal · Background sessions · Tunnel presets · Security and language settings (demo data)</sub></p>
 
 ## Why this project
 

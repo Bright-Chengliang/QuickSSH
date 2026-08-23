@@ -13,11 +13,18 @@ QuickSSH 是一款面向 Android 的 SSH 客户端，将服务器配置、多工
 ## 应用截图
 
 <p align="center">
-  <img src="docs/screenshots/home.png" alt="QuickSSH 主页" width="30%" />
-  <img src="docs/screenshots/transfer.png" alt="QuickSSH 文件传输" width="30%" />
-  <img src="docs/screenshots/settings.png" alt="QuickSSH 设置" width="30%" />
+  <img src="docs/screenshots/home.png" alt="QuickSSH 多工作区主机列表" width="45%" />
+  <img src="docs/screenshots/transfer.png" alt="QuickSSH 传输历史与状态" width="45%" />
 </p>
-<p align="center"><sub>主页 · 文件传输 · 设置</sub></p>
+<p align="center">
+  <img src="docs/screenshots/terminal.png" alt="QuickSSH 持久终端与控制键" width="45%" />
+  <img src="docs/screenshots/sessions.png" alt="QuickSSH 后台 SSH 会话" width="45%" />
+</p>
+<p align="center">
+  <img src="docs/screenshots/tunnel.png" alt="QuickSSH SSH 隧道预设" width="45%" />
+  <img src="docs/screenshots/settings.png" alt="QuickSSH 安全与双语设置" width="45%" />
+</p>
+<p align="center"><sub>多工作区 · 可观察传输 · 持久终端 · 后台会话 · 隧道预设 · 安全与双语设置（演示数据）</sub></p>
 
 Developed by [Bright-Chengliang](https://github.com/Bright-Chengliang) · © 2026 Chengliang Liu · [MIT License](LICENSE)
 

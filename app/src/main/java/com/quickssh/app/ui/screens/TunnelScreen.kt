@@ -121,12 +121,13 @@ fun TunnelScreen(
                     presets = tunnelPresets,
                     selectedPresetId = selectedPresetId,
                     onPresetSelected = onPresetSelected,
+                    language = language,
                     modifier = Modifier.weight(1f)
                 )
                 ResponsiveTunnelOutlinedButton(
                     onClick = onNewPreset,
                     enabled = selectedConfig != null,
-                    text = "\u65B0\u5EFA\u9884\u8BBE",
+                    text = language.text("新建预设", "New preset"),
                     leadingIcon = { Icon(imageVector = Icons.Default.Add, contentDescription = null) }
                 )
             }
@@ -135,7 +136,7 @@ fun TunnelScreen(
                 OutlinedTextField(
                     value = presetName,
                     onValueChange = { onPresetNameChange(it.take(80)) },
-                    label = { Text("预设名称") },
+                    label = { Text(language.text("预设名称", "Preset name")) },
                     placeholder = { Text("例：New API") },
                     modifier = Modifier.weight(1f),
                     singleLine = true
@@ -143,8 +144,8 @@ fun TunnelScreen(
                 OutlinedTextField(
                     value = presetNote,
                     onValueChange = { onPresetNoteChange(it.take(160)) },
-                    label = { Text("备注") },
-                    placeholder = { Text("用途、账号、环境") },
+                    label = { Text(language.text("备注", "Note")) },
+                    placeholder = { Text(language.text("用途、账号、环境", "Purpose, account, environment")) },
                     modifier = Modifier.weight(1f),
                     singleLine = true
                 )
@@ -153,7 +154,7 @@ fun TunnelScreen(
             OutlinedTextField(
                 value = remoteHost,
                 onValueChange = onRemoteHostChange,
-                label = { Text("远端服务地址") },
+                label = { Text(language.text("远端服务地址", "Remote service address")) },
                 placeholder = { Text("127.0.0.1") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
@@ -163,7 +164,7 @@ fun TunnelScreen(
                 OutlinedTextField(
                     value = remotePort,
                     onValueChange = { onRemotePortChange(it.filter(Char::isDigit).take(5)) },
-                    label = { Text("远端端口") },
+                    label = { Text(language.text("远端端口", "Remote port")) },
                     placeholder = { Text("3000") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.weight(1f),
@@ -172,8 +173,8 @@ fun TunnelScreen(
                 OutlinedTextField(
                     value = localPort,
                     onValueChange = { onLocalPortChange(it.filter(Char::isDigit).take(5)) },
-                    label = { Text("手机端口") },
-                    placeholder = { Text("自动") },
+                    label = { Text(language.text("手机端口", "Local port")) },
+                    placeholder = { Text(language.text("自动", "Auto")) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.weight(1f),
                     singleLine = true
@@ -185,13 +186,13 @@ fun TunnelScreen(
                     onClick = onSavePreset,
                     enabled = selectedConfig != null && remotePort.toIntOrNull()?.let { it in 1..65535 } == true,
                     modifier = Modifier.weight(1f),
-                    text = if (selectedPresetId == null) "保存预设" else "更新预设"
+                    text = if (selectedPresetId == null) language.text("保存预设", "Save preset") else language.text("更新预设", "Update preset")
                 )
                 ResponsiveTunnelOutlinedButton(
                     onClick = onDeletePreset,
                     enabled = selectedPresetId != null,
                     modifier = Modifier.weight(1f),
-                    text = "删除预设"
+                    text = language.text("删除预设", "Delete preset")
                 )
             }
 
@@ -200,20 +201,20 @@ fun TunnelScreen(
                     onClick = onStartTunnel,
                     enabled = selectedConfig != null && remotePort.toIntOrNull()?.let { it in 1..65535 } == true,
                     modifier = Modifier.weight(1f),
-                    text = "启动隧道"
+                    text = language.text("启动隧道", "Start tunnel")
                 )
                 ResponsiveTunnelOutlinedButton(
                     onClick = onStopAllTunnels,
                     enabled = activeTunnels.isNotEmpty(),
                     modifier = Modifier.weight(1f),
-                    text = "停止全部"
+                    text = language.text("停止全部", "Stop all")
                 )
             }
 
-            Text(text = statusText, style = MaterialTheme.typography.bodyMedium)
+            Text(text = tunnelStatusLabel(statusText, language), style = MaterialTheme.typography.bodyMedium)
 
             if (tunnelStates.isNotEmpty()) {
-                Text(text = "隧道状态", style = MaterialTheme.typography.titleMedium)
+                Text(text = language.text("隧道状态", "Tunnel status"), style = MaterialTheme.typography.titleMedium)
                 tunnelStates.forEach { tunnel ->
                     TunnelStateRow(
                         tunnel = tunnel,
@@ -232,6 +233,7 @@ private fun TunnelPresetSelector(
     presets: List<SshTunnelPreset>,
     selectedPresetId: Long?,
     onPresetSelected: (SshTunnelPreset) -> Unit,
+    language: AppLanguage,
     modifier: Modifier = Modifier
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -241,15 +243,15 @@ private fun TunnelPresetSelector(
             onClick = { expanded = true },
             enabled = presets.isNotEmpty(),
             modifier = Modifier.fillMaxWidth(),
-            text = selected?.presetLabel() ?: if (presets.isEmpty()) "暂无隧道预设" else "选择隧道预设",
-            trailingIcon = { Icon(imageVector = Icons.Default.KeyboardArrowDown, contentDescription = "展开") }
+            text = selected?.presetLabel(language) ?: if (presets.isEmpty()) language.text("暂无隧道预设", "No tunnel presets") else language.text("选择隧道预设", "Select tunnel preset"),
+            trailingIcon = { Icon(imageVector = Icons.Default.KeyboardArrowDown, contentDescription = language.text("展开", "Expand")) }
         )
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             presets.forEach { preset ->
                 DropdownMenuItem(
                     text = {
                         Column {
-                            Text(preset.presetLabel(), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(preset.presetLabel(language), maxLines = 1, overflow = TextOverflow.Ellipsis)
                             preset.note?.takeIf { it.isNotBlank() }?.let { note ->
                                 Text(note, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
@@ -280,7 +282,7 @@ fun TunnelWebScreen(
                 navigationIcon = {
                     FeedbackIconButton(
                         imageVector = Icons.Default.Close,
-                        contentDescription = "关闭",
+                    contentDescription = LocalQuickSshLanguage.current.text("关闭", "Close"),
                         onClick = onBackClicked,
                         tint = MaterialTheme.colorScheme.onSurface
                     )
@@ -288,7 +290,7 @@ fun TunnelWebScreen(
                 trailing = {
                     FeedbackIconButton(
                         drawableResId = R.drawable.ic_open_in_browser,
-                        contentDescription = "外部打开",
+                        contentDescription = LocalQuickSshLanguage.current.text("外部打开", "Open externally"),
                         onClick = { onOpenExternal(url) },
                         tint = MaterialTheme.colorScheme.onSurface
                     )
@@ -371,7 +373,7 @@ private fun TunnelWebView(url: String, modifier: Modifier = Modifier) {
                 pendingAuth = null
                 authPassword = ""
             },
-            title = { Text("HTTP 登录验证") },
+            title = { Text(LocalQuickSshLanguage.current.text("HTTP 登录验证", "HTTP authentication")) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
@@ -381,14 +383,14 @@ private fun TunnelWebView(url: String, modifier: Modifier = Modifier) {
                     OutlinedTextField(
                         value = authUsername,
                         onValueChange = { authUsername = it },
-                        label = { Text("用户名") },
+                        label = { Text(LocalQuickSshLanguage.current.text("用户名", "Username")) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
                         value = authPassword,
                         onValueChange = { authPassword = it },
-                        label = { Text("密码") },
+                        label = { Text(LocalQuickSshLanguage.current.text("密码", "Password")) },
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
                         modifier = Modifier.fillMaxWidth()
@@ -409,7 +411,7 @@ private fun TunnelWebView(url: String, modifier: Modifier = Modifier) {
                         authPassword = ""
                     }
                 ) {
-                    Text("登录")
+                    Text(LocalQuickSshLanguage.current.text("登录", "Sign in"))
                 }
             },
             dismissButton = {
@@ -420,7 +422,7 @@ private fun TunnelWebView(url: String, modifier: Modifier = Modifier) {
                         authPassword = ""
                     }
                 ) {
-                    Text("取消")
+                    Text(LocalQuickSshLanguage.current.text("取消", "Cancel"))
                 }
             }
         )
@@ -441,6 +443,7 @@ private fun TunnelStateRow(
     onOpenInternal: (String) -> Unit,
     onOpenExternal: (String) -> Unit
 ) {
+    val language = LocalQuickSshLanguage.current
     val statusColor by animateColorAsState(
         targetValue = when (tunnel.status) {
             TunnelStatus.RUNNING -> MaterialTheme.colorScheme.primary
@@ -489,19 +492,19 @@ private fun TunnelStateRow(
                     onClick = { onOpenInternal(tunnel.browserUrl) },
                     enabled = tunnel.status == TunnelStatus.RUNNING
                 ) {
-                    Text("内置打开")
+                    Text(language.text("内置打开", "Open in app"))
                 }
                 FeedbackTextButton(
                     onClick = { onOpenExternal(tunnel.browserUrl) },
                     enabled = tunnel.status == TunnelStatus.RUNNING
                 ) {
-                    Text("外部打开")
+                    Text(language.text("外部打开", "Open externally"))
                 }
                 FeedbackTextButton(
                     onClick = { onStopTunnel(tunnel.tunnelId) },
                     enabled = tunnel.status == TunnelStatus.RUNNING || tunnel.status == TunnelStatus.CONNECTING
                 ) {
-                    Text("停止")
+                    Text(language.text("停止", "Stop"))
                 }
             }
         }
@@ -510,14 +513,15 @@ private fun TunnelStateRow(
 
 @Composable
 private fun TunnelServerSelector(configs: List<SshConfig>, selectedConfig: SshConfig?, onConfigSelected: (SshConfig) -> Unit) {
+    val language = LocalQuickSshLanguage.current
     var expanded by remember { mutableStateOf(false) }
     val groups by remember(configs) { derivedStateOf { groupedSshServers(configs) } }
     Box(modifier = Modifier.fillMaxWidth()) {
         ResponsiveTunnelOutlinedButton(
             onClick = { expanded = true },
             modifier = Modifier.fillMaxWidth(),
-            text = selectedConfig?.transferContextLabel() ?: "选择服务器 / 工作区",
-            trailingIcon = { Icon(imageVector = Icons.Default.KeyboardArrowDown, contentDescription = "展开") }
+            text = selectedConfig?.transferContextLabel() ?: language.text("选择服务器 / 工作区", "Select server / workspace"),
+            trailingIcon = { Icon(imageVector = Icons.Default.KeyboardArrowDown, contentDescription = language.text("展开", "Expand")) }
         )
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             groups.forEach { group ->
@@ -537,7 +541,7 @@ private fun TunnelServerSelector(configs: List<SshConfig>, selectedConfig: SshCo
                 }
             }
             if (configs.isEmpty()) {
-                DropdownMenuItem(text = { Text("暂无服务器配置") }, onClick = { expanded = false })
+                DropdownMenuItem(text = { Text(language.text("暂无服务器配置", "No server profiles")) }, onClick = { expanded = false })
             }
         }
     }
@@ -597,8 +601,26 @@ internal fun parseTunnelPort(text: String, allowAuto: Boolean): Int? {
     return text.toIntOrNull()?.takeIf { it in 1..65535 }
 }
 
-internal fun SshTunnelPreset.presetLabel(): String {
+internal fun SshTunnelPreset.presetLabel(language: AppLanguage = AppLanguage.ZH): String {
     val base = name.trim().ifBlank { tunnelPresetDefaultName(remoteHost, remotePort) }
-    val local = if (localPort > 0) localPort.toString() else "自动"
+    val local = if (localPort > 0) localPort.toString() else language.text("自动", "auto")
     return "$base · $remoteHost:$remotePort -> $local"
+}
+
+internal fun tunnelStatusLabel(statusText: String, language: AppLanguage): String {
+    if (language == AppLanguage.ZH) return statusText
+    return when {
+        statusText == "等待启动隧道" -> "Waiting to start tunnel"
+        statusText == "已删除隧道预设" -> "Tunnel preset deleted"
+        statusText.startsWith("已保存隧道预设：") -> statusText.replaceFirst("已保存隧道预设：", "Saved tunnel preset: ")
+        statusText.startsWith("失败：请先选择服务器") -> statusText.replaceFirst("失败：请先选择服务器", "Failed: select a server first")
+        statusText.startsWith("失败：远端端口必须是") -> statusText.replaceFirst("失败：远端端口必须是", "Failed: remote port must be")
+        statusText.startsWith("失败：手机端口必须是") -> statusText.replaceFirst("失败：手机端口必须是", "Failed: local port must be")
+        statusText.startsWith("正在启动隧道：") -> statusText.replaceFirst("正在启动隧道：", "Starting tunnel: ")
+        statusText.startsWith("隧道已启动：") -> statusText.replaceFirst("隧道已启动：", "Tunnel started: ")
+        statusText.startsWith("正在连接：") -> statusText.replaceFirst("正在连接：", "Connecting: ")
+        statusText.startsWith("正在重连：") -> statusText.replaceFirst("正在重连：", "Reconnecting: ")
+        statusText.startsWith("无法打开浏览器：") -> statusText.replaceFirst("无法打开浏览器：", "Unable to open browser: ")
+        else -> statusText
+    }
 }
