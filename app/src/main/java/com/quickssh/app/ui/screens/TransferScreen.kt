@@ -37,8 +37,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -409,12 +407,9 @@ private fun TransferProgressTopBar(
         progressFraction = progressFraction
     )
     Column {
-        TopAppBar(
-            title = { Text("\u6587\u4ef6\u4f20\u8f93") },
-            colors = TopAppBarDefaults.topAppBarColors(
-                containerColor = MaterialTheme.colorScheme.surface,
-                titleContentColor = MaterialTheme.colorScheme.onSurface
-            )
+        QuickSshPageHeader(
+            title = "文件传输",
+            subtitle = "SFTP uploads, downloads and transfer history"
         )
         when (mode) {
             TransferTopProgressMode.Idle -> {

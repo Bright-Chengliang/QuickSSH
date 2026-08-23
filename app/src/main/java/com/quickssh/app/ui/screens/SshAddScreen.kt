@@ -21,8 +21,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -121,17 +119,14 @@ fun SshAddScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        when {
-                            isWorkspaceCopy -> "Add Workspace"
-                            isCopyMode -> "Copy Workspace"
-                            isEditing -> "Edit SSH Server"
-                            else -> "Add SSH Server"
-                        }
-                    )
+            QuickSshPageHeader(
+                title = when {
+                    isWorkspaceCopy -> "Add Workspace"
+                    isCopyMode -> "Copy Workspace"
+                    isEditing -> "Edit SSH Server"
+                    else -> "Add SSH Server"
                 },
+                subtitle = "Connection, credentials and terminal defaults",
                 navigationIcon = {
                     FeedbackIconButton(
                         imageVector = Icons.Default.ArrowBack,
@@ -139,13 +134,7 @@ fun SshAddScreen(
                         onClick = onBackClicked,
                         tint = MaterialTheme.colorScheme.primary
                     )
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    titleContentColor = MaterialTheme.colorScheme.onSurface,
-                    navigationIconContentColor = MaterialTheme.colorScheme.primary,
-                    actionIconContentColor = MaterialTheme.colorScheme.primary
-                )
+                }
             )
         }
     ) { innerPadding ->

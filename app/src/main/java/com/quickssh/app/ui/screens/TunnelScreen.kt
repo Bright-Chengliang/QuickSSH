@@ -37,8 +37,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.derivedStateOf
@@ -100,12 +98,9 @@ fun TunnelScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("SSH 隧道") },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    titleContentColor = MaterialTheme.colorScheme.onSurface
-                )
+            QuickSshPageHeader(
+                title = "SSH 隧道",
+                subtitle = "Local port forwarding and private web services"
             )
         },
         bottomBar = bottomBar
@@ -278,10 +273,9 @@ fun TunnelWebScreen(
 ) {
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(url, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                },
+            QuickSshPageHeader(
+                title = url,
+                subtitle = "Tunnel web view",
                 navigationIcon = {
                     FeedbackIconButton(
                         imageVector = Icons.Default.Close,
@@ -290,7 +284,7 @@ fun TunnelWebScreen(
                         tint = MaterialTheme.colorScheme.onSurface
                     )
                 },
-                actions = {
+                trailing = {
                     FeedbackIconButton(
                         drawableResId = R.drawable.ic_open_in_browser,
                         contentDescription = "外部打开",
