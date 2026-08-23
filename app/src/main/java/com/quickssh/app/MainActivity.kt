@@ -12,7 +12,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.ServiceConnection
-import android.content.res.Configuration
 import android.graphics.Color as AndroidColor
 import android.net.Uri
 import android.os.Build
@@ -425,19 +424,18 @@ class MainActivity : FragmentActivity() {
         super.onCreate(savedInstanceState)
 
         WindowCompat.setDecorFitsSystemWindows(window, true)
-        window.statusBarColor = AndroidColor.TRANSPARENT
-        window.navigationBarColor = AndroidColor.TRANSPARENT
-        val darkSystem = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
-            Configuration.UI_MODE_NIGHT_YES
+        // Keep system chrome aligned with the app's dark top and bottom bars.
+        window.statusBarColor = AndroidColor.rgb(255, 255, 255)
+        window.navigationBarColor = AndroidColor.rgb(239, 237, 231)
         WindowInsetsControllerCompat(window, window.decorView).apply {
-            isAppearanceLightStatusBars = !darkSystem
-            isAppearanceLightNavigationBars = !darkSystem
+            isAppearanceLightStatusBars = true
+            isAppearanceLightNavigationBars = true
         }
 
         mainExecutor = ContextCompat.getMainExecutor(this)
 
         setContent {
-            QuickSshTheme {
+            QuickSshTheme(dynamicColor = false) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background

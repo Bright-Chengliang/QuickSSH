@@ -109,7 +109,7 @@ fun SshListScreen(
                         imageVector = Icons.Default.Add,
                         contentDescription = "Add server",
                         onClick = onAddClicked,
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer
+                        tint = MaterialTheme.colorScheme.primary
                     )
                 }
             )

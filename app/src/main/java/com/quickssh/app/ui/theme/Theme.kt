@@ -12,45 +12,59 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 
 private val LightColors = lightColorScheme(
-    primary = QuickSshBlue,
-    onPrimary = Color.White,
-    primaryContainer = QuickSshBlueLight,
-    onPrimaryContainer = Color(0xFF001B3D),
-    secondary = QuickSshTeal,
+    primary = QuickSshOrange,
+    onPrimary = QuickSshDeepWarmText,
+    primaryContainer = QuickSshOrangeContainer,
+    onPrimaryContainer = Color(0xFF4B1F16),
+    secondary = QuickSshGreen,
     onSecondary = Color.White,
-    secondaryContainer = QuickSshTealLight,
-    onSecondaryContainer = Color(0xFF002021),
+    secondaryContainer = QuickSshGreenContainer,
+    onSecondaryContainer = Color(0xFF191D0F),
+    tertiary = QuickSshTeal,
+    onTertiary = Color.White,
+    tertiaryContainer = QuickSshTealContainer,
+    onTertiaryContainer = Color(0xFF10201C),
     background = QuickSshCanvas,
     surface = Color.White,
-    surfaceVariant = Color(0xFFE9EEF5),
+    surfaceVariant = Color(0xFFEFEDE7),
     onSurface = QuickSshInk,
-    onSurfaceVariant = Color(0xFF414A55),
-    outline = Color(0xFF707A86),
-    error = Color(0xFFBA1A1A)
+    onSurfaceVariant = Color(0xFF6F6D66),
+    outline = Color(0xFF6F6D66),
+    outlineVariant = Color(0xFFDCD9D1),
+    inverseSurface = QuickSshDeepWarm,
+    inverseOnSurface = QuickSshDeepWarmText,
+    error = Color(0xFFA43F35)
 )
 
 private val DarkColors = darkColorScheme(
-    primary = Color(0xFFA9C8FF),
-    onPrimary = Color(0xFF00315F),
-    primaryContainer = Color(0xFF164A80),
-    onPrimaryContainer = Color(0xFFD5E3FF),
-    secondary = Color(0xFF80D4D2),
-    onSecondary = Color(0xFF003737),
-    secondaryContainer = Color(0xFF00504F),
-    onSecondaryContainer = Color(0xFF9CF1EF),
+    primary = Color(0xFFE7A99A),
+    onPrimary = Color(0xFF541F15),
+    primaryContainer = Color(0xFF713A31),
+    onPrimaryContainer = Color(0xFFFFDAD3),
+    secondary = Color(0xFFB7CBAE),
+    onSecondary = Color(0xFF23351F),
+    secondaryContainer = Color(0xFF3D5138),
+    onSecondaryContainer = Color(0xFFD3E8C9),
+    tertiary = Color(0xFFA9CCC0),
+    onTertiary = Color(0xFF12352E),
+    tertiaryContainer = Color(0xFF2D5048),
+    onTertiaryContainer = Color(0xFFC5E9DD),
     background = QuickSshDarkCanvas,
     surface = QuickSshDarkSurface,
-    surfaceVariant = Color(0xFF29323B),
-    onSurface = Color(0xFFE2E7ED),
-    onSurfaceVariant = Color(0xFFC1C9D2),
-    outline = Color(0xFF89939E),
+    surfaceVariant = Color(0xFF494741),
+    onSurface = Color(0xFFF0EEE8),
+    onSurfaceVariant = Color(0xFFD2CFC7),
+    outline = Color(0xFFD2CFC7),
+    outlineVariant = Color(0xFF5B5953),
+    inverseSurface = QuickSshDeepWarm,
+    inverseOnSurface = QuickSshDeepWarmText,
     error = Color(0xFFFFB4AB)
 )
 
 @Composable
 fun QuickSshTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = true,
+    dynamicColor: Boolean = false,
     content: @Composable () -> Unit
 ) {
     val context = LocalContext.current
@@ -69,4 +83,3 @@ fun QuickSshTheme(
         content = content
     )
 }
-
