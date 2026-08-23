@@ -94,6 +94,7 @@ import com.quickssh.app.ui.screens.shellSafePathReference
 import com.quickssh.app.ui.screens.transferQueueTaskUiState
 import com.quickssh.app.ui.screens.transferTaskProgressDetail
 import com.quickssh.app.ui.screens.transferTasksWithBatchState
+import com.quickssh.app.ui.theme.QuickSshTheme
 import com.quickssh.app.utils.TerminalBuffer
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
@@ -422,7 +423,7 @@ class MainActivity : FragmentActivity() {
         mainExecutor = ContextCompat.getMainExecutor(this)
 
         setContent {
-            MaterialTheme {
+            QuickSshTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
