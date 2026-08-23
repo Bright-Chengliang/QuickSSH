@@ -1,8 +1,47 @@
 # QuickSSH
 
+> A focused Android SSH workspace for persistent terminals, SFTP transfers, and local port forwarding.
+
+[![Android](https://img.shields.io/badge/Android-API%2026%2B-3DDC84?logo=android&logoColor=white)](app/src/main/AndroidManifest.xml)
+[![Kotlin](https://img.shields.io/badge/Kotlin-1.9.22-7F52FF?logo=kotlin&logoColor=white)](gradle/libs.versions.toml)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 QuickSSH 是一款面向 Android 的 SSH 客户端，将服务器配置、多工作区、终端、文件传输和 SSH 隧道整合在一个应用中。它使用 Jetpack Compose 构建界面，通过 SSHJ 建立 SSH/SFTP 连接，并用 Android Keystore 加密保存在设备本地的密码和私钥。
 
 Developed by [Bright-Chengliang](https://github.com/Bright-Chengliang) · © 2026 Chengliang Liu · [MIT License](LICENSE)
+
+## Why this project
+
+QuickSSH is designed around the workflows that are awkward to keep together on a phone: reconnecting to long-running shell sessions, moving files with visible progress, and reaching a private web service through an SSH tunnel. The app keeps credentials on-device, isolates long-running work in foreground services, and exposes strict host-key verification as an explicit security setting.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    UI[Jetpack Compose UI] --> DB[Room database]
+    UI --> Services[Foreground services]
+    Services --> SSH[SSHJ SSH / SFTP]
+    Services --> Tunnel[Local port forwarding]
+    Credentials[Android Keystore] --> Services
+    SSH --> Host[Remote host]
+    Tunnel --> WebView[Local WebView]
+```
+
+The app is split into `data/` for persistence and migrations, `security/` for Keystore-backed encryption, `service/` for SSH/SFTP/tunnel lifecycles, and `ui/screens/` for the Compose workflows. The small `net/schmizz/sshj/` patch keeps transfer progress observable without introducing a second transport implementation.
+
+## Verification
+
+The repository includes unit tests for terminal rendering and input, SSH authentication and host-key decisions, Room migrations, encrypted backups, transfer queues, tunnel parameters, and key UI flows.
+
+```powershell
+.\gradlew.bat testDebugUnitTest
+```
+
+Instrumentation tests cover Android-only flows and can be run with a connected emulator or device:
+
+```powershell
+.\gradlew.bat connectedDebugAndroidTest
+```
 
 ## 功能特性
 

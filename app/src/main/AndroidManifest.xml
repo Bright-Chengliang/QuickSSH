@@ -12,7 +12,6 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Android 13+ 前台服务通知权限 -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:allowBackup="false"
