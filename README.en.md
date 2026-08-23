@@ -10,20 +10,6 @@
 
 QuickSSH is a native Android SSH client built around real remote-development workflows: persistent shell sessions, SFTP file operations, and access to private services through SSH tunnels. It uses Jetpack Compose for the UI, SSHJ for SSH/SFTP, Room for local persistence, and Android Keystore for credential protection.
 
-## Screenshots
-
-<p align="center">
-  <img src="docs/screenshots/home-en.png" alt="QuickSSH multi-workspace hosts" width="23%" />
-  <img src="docs/screenshots/transfer-en.png" alt="QuickSSH transfer history and status" width="23%" />
-  <img src="docs/screenshots/tunnel-en.png" alt="QuickSSH SSH tunnel presets" width="23%" />
-  <img src="docs/screenshots/settings-en.png" alt="QuickSSH security and bilingual settings" width="23%" />
-</p>
-<p align="center">
-  <img src="docs/screenshots/terminal-en.png" alt="QuickSSH persistent terminal and controls" width="45%" />
-  <img src="docs/screenshots/sessions-en.png" alt="QuickSSH background SSH sessions" width="45%" />
-</p>
-<p align="center"><sub>Multi-workspace hosts · Observable transfers · Persistent terminal · Background sessions · Tunnel presets · Security and language settings (demo data)</sub></p>
-
 ## Why this project
 
 Mobile SSH tools often stop at “connect and type commands”. In practice, developers also need to switch between project workspaces, keep long-running sessions alive, move files with recoverable progress, and reach services that should remain private. QuickSSH brings these workflows into one explicit, testable local workspace.
@@ -38,6 +24,8 @@ Mobile SSH tools often stop at “connect and type commands”. In practice, dev
 
 **Implementation:** Server profiles are grouped by `host / port / username / authType`, while each workspace stores its own working directory, post-connect command, terminal settings, and shortcuts. Room stores servers, workspaces, tunnel presets, and transfer history with migrations for upgrades.
 
+<p align="center"><img src="docs/screenshots/home-en.png" alt="QuickSSH multi-workspace hosts" width="48%" /></p>
+
 ### Long-running SSH sessions
 
 <ins><em>Long-running remote commands keep running when the phone is backgrounded or locked.</em></ins>
@@ -45,6 +33,8 @@ Mobile SSH tools often stop at “connect and type commands”. In practice, dev
 **Motivation:** Backgrounding or locking a phone should not terminate an important shell task. Binding the SSH connection directly to a screen makes that failure mode almost inevitable.
 
 **Implementation:** Foreground services own SSH sessions and support reconnecting after network recovery. The terminal layer handles ANSI colors, cursor control, TUI applications, selection/copy, UTF-8, and GB18030 output. Password and OpenSSH private-key authentication share the same lifecycle.
+
+<p align="center"><img src="docs/screenshots/sessions-en.png" alt="QuickSSH background SSH sessions" width="48%" /></p>
 
 ### Observable and recoverable SFTP transfers
 
@@ -54,12 +44,16 @@ Mobile SSH tools often stop at “connect and type commands”. In practice, dev
 
 **Implementation:** The file browser supports multi-selection, pagination, recursive downloads, and confirmation plans. Transfers support conflict policies, queues, pause/resume, cancellation, retry, progress, and local history. A small SSHJ patch exposes transfer progress to the app's task model without replacing the transport layer.
 
+<p align="center"><img src="docs/screenshots/transfer-en.png" alt="QuickSSH transfer history and status" width="48%" /></p>
+
 ### Terminal upload with automatic path insertion
 
 <ins><em>Choose a file in the mobile SSH terminal, upload it remotely, and hand the inserted path to Codex for reading and analysis.</em></ins>
 
 **Motivation:** When running Codex or another capable agent through SSH on a phone, uploading the file is only half the problem. The agent can read and analyze a file once it receives the remote path, but manually locating that path and switching back to the terminal is tedious and especially awkward on a touch screen.
 **Implementation:** The terminal input bar has a dedicated upload action. Selected files are uploaded through the active SSH session into the current workspace's `.QuickSSH/upload` directory. After the transfer completes, QuickSSH inserts shell-safe remote paths directly into the terminal input field, ready to be given to the agent for reading and analysis. Progress, successful paths, and failures remain visible in transfer history.
+
+<p align="center"><img src="docs/screenshots/terminal-en.png" alt="QuickSSH terminal and file-upload entry point" width="48%" /></p>
 
 ### SSH tunnels for private services
 
@@ -69,6 +63,8 @@ Mobile SSH tools often stop at “connect and type commands”. In practice, dev
 
 **Implementation:** QuickSSH supports local forwarding, automatic local-port allocation, multiple tunnels, reconnects, and a WebView for the forwarded local endpoint. HTTP Basic Auth prompts are handled inside the tunnel workflow.
 
+<p align="center"><img src="docs/screenshots/tunnel-en.png" alt="QuickSSH SSH tunnel presets" width="48%" /></p>
+
 ### Explicit credential and host-key boundaries
 
 <ins><em>Keep passwords and private keys in protected device storage and verify the server identity before trusting a connection.</em></ins>
@@ -76,6 +72,8 @@ Mobile SSH tools often stop at “connect and type commands”. In practice, dev
 **Motivation:** SSH credentials and host identity are high-value security material. Encrypting only the database, or passing plaintext credentials through service intents, is not a sufficient boundary.
 
 **Implementation:** Passwords and private keys are encrypted with an Android Keystore-backed AES-GCM key. Optional biometric unlock protects credential access. Strict host-key verification rejects unknown or changed fingerprints. Backups can be encrypted with a user-supplied password using PBKDF2 and AES-GCM.
+
+<p align="center"><img src="docs/screenshots/settings-en.png" alt="QuickSSH security and bilingual settings" width="48%" /></p>
 
 ## Architecture
 

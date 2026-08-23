@@ -10,20 +10,6 @@
 
 QuickSSH 是一款面向 Android 的 SSH 客户端，将服务器配置、多工作区、终端、文件传输和 SSH 隧道整合在一个应用中。它使用 Jetpack Compose 构建界面，通过 SSHJ 建立 SSH/SFTP 连接，并用 Android Keystore 加密保存在设备本地的密码和私钥。
 
-## 应用截图
-
-<p align="center">
-  <img src="docs/screenshots/home.png" alt="QuickSSH 多工作区主机列表" width="23%" />
-  <img src="docs/screenshots/transfer.png" alt="QuickSSH 传输历史与状态" width="23%" />
-  <img src="docs/screenshots/tunnel.png" alt="QuickSSH SSH 隧道预设" width="23%" />
-  <img src="docs/screenshots/settings.png" alt="QuickSSH 安全与双语设置" width="23%" />
-</p>
-<p align="center">
-  <img src="docs/screenshots/terminal.png" alt="QuickSSH 持久终端与控制键" width="45%" />
-  <img src="docs/screenshots/sessions.png" alt="QuickSSH 后台 SSH 会话" width="45%" />
-</p>
-<p align="center"><sub>多工作区 · 可观察传输 · 持久终端 · 后台会话 · 隧道预设 · 安全与双语设置（演示数据）</sub></p>
-
 Developed by [Bright-Chengliang](https://github.com/Bright-Chengliang) · © 2026 Chengliang Liu · [MIT License](LICENSE)
 
 ## 项目定位
@@ -40,6 +26,8 @@ Developed by [Bright-Chengliang](https://github.com/Bright-Chengliang) · © 202
 
 **具体实现：** QuickSSH 按 `host / port / username / authType` 聚合服务器，并允许每个工作区独立保存工作目录、连接后命令、终端字号、自动换行、`TERM` 和快捷命令。服务器、工作区、隧道预设和传输历史都通过 Room 持久化，并通过数据库迁移保留升级后的历史数据。
 
+<p align="center"><img src="docs/screenshots/home.png" alt="QuickSSH 多工作区主机列表" width="48%" /></p>
+
 ### 2. 可长期运行的 SSH 终端
 
 <ins><em>手机切到后台或锁屏后，远端命令仍可继续运行，回到应用即可接着操作。</em></ins>
@@ -47,6 +35,8 @@ Developed by [Bright-Chengliang](https://github.com/Bright-Chengliang) · © 202
 **设计动机：** 移动端最容易丢失的是长连接。切到后台、锁屏或网络短暂变化后，终端会话如果直接绑定 UI，就会中断正在运行的任务。
 
 **具体实现：** SSH 会话由前台服务托管，支持网络恢复后的自动重连；终端层处理 ANSI 颜色、光标控制、TUI 应用、滚轮回退、行列选择、复制，以及 UTF-8 和 GB18030 输出解码。密码认证与 OpenSSH 私钥认证走统一的连接生命周期。
+
+<p align="center"><img src="docs/screenshots/sessions.png" alt="QuickSSH 后台 SSH 会话" width="48%" /></p>
 
 ### 3. 可观察、可恢复的 SFTP 传输
 
@@ -56,12 +46,16 @@ Developed by [Bright-Chengliang](https://github.com/Bright-Chengliang) · © 202
 
 **具体实现：** 文件浏览器支持多选、分页、目录递归下载和下载计划确认；上传支持自动改名、覆盖和失败三种冲突策略。传输任务由前台服务执行，提供队列、暂停/恢复、取消等待、断线重试和实时进度，并记录最近 300 条传输历史。项目对 SSHJ 的传输层做了小范围补丁，使进度回调能够进入应用自己的任务队列。
 
+<p align="center"><img src="docs/screenshots/transfer.png" alt="QuickSSH 传输历史与状态" width="48%" /></p>
+
 ### 4. 终端内快速上传与路径回填
 
 <ins><em>在手机 SSH 终端里选中文件，上传到远端后，路径会自动填回输入框，直接交给 Codex 读取和分析。</em></ins>
 
 **设计动机：** 在手机 SSH 中启动 Codex 等具有文件读取能力的 agent 时，真正麻烦的不是把文件传到服务器，而是上传后还要手动查找远端路径，再切回终端输入。只要把文件路径交给 agent，它就可以根据路径读取和分析文件；这个上传、查找、回填的过程在触屏设备上尤其繁琐。
 **具体实现：** 终端输入栏提供独立的文件上传入口。选中的文件会通过当前 SSH 会话上传到当前工作区的 `.QuickSSH/upload` 目录；上传完成后，应用会将远端文件路径自动以 shell 安全格式回填到终端输入框，用户可以直接把路径交给 agent 读取和分析。上传进度、成功路径和失败状态会同步到传输历史。
+
+<p align="center"><img src="docs/screenshots/terminal.png" alt="QuickSSH 终端与文件上传入口" width="48%" /></p>
 
 ### 5. SSH 隧道与移动端内网访问
 
@@ -71,6 +65,8 @@ Developed by [Bright-Chengliang](https://github.com/Bright-Chengliang) · © 202
 
 **具体实现：** 支持本地端口转发、自动分配本地端口、多隧道并行和断线重连；隧道由独立前台服务托管，并提供 WebView 访问转发后的本地地址和 HTTP Basic Auth 交互。
 
+<p align="center"><img src="docs/screenshots/tunnel.png" alt="QuickSSH SSH 隧道预设" width="48%" /></p>
+
 ### 6. 凭据保护与主机密钥验证
 
 <ins><em>密码和私钥留在设备安全存储中，连接前还能核对服务器身份。</em></ins>
@@ -78,6 +74,8 @@ Developed by [Bright-Chengliang](https://github.com/Bright-Chengliang) · © 202
 **设计动机：** SSH 客户端保存的是高价值凭据；仅仅把密码放进本地数据库，或在服务 Intent 中传递明文，都无法形成可信的安全边界。
 
 **具体实现：** 密码和私钥使用 Android Keystore 中的 AES-GCM 密钥加密后入库，不通过前台服务 Intent 明文传递；可选生物识别解锁，连接或编辑凭据前要求验证。主机密钥验证默认记录首次观察到的指纹，开启严格模式后拒绝未知或变化的指纹，并将待确认指纹交给用户处理。服务器配置支持导出/导入，导出时可以用用户提供的密码进行 PBKDF2 + AES-GCM 加密。
+
+<p align="center"><img src="docs/screenshots/settings.png" alt="QuickSSH 安全与双语设置" width="48%" /></p>
 
 ## 架构概览
 
