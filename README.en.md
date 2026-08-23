@@ -34,6 +34,12 @@ Mobile SSH tools often stop at “connect and type commands”. In practice, dev
 
 **Implementation:** The file browser supports multi-selection, pagination, recursive downloads, and confirmation plans. Transfers support conflict policies, queues, pause/resume, cancellation, retry, progress, and local history. A small SSHJ patch exposes transfer progress to the app's task model without replacing the transport layer.
 
+### Terminal upload with automatic path insertion
+
+**Motivation:** When running Codex or another file-aware TUI through SSH on a phone, uploading the file is only half the problem. Manually locating the remote path and switching back to the terminal interrupts the task and is especially awkward on a touch screen.
+
+**Implementation:** The terminal input bar has a dedicated upload action. Selected files are uploaded through the active SSH session into the current workspace's `.QuickSSH/upload` directory. After the transfer completes, QuickSSH inserts shell-safe remote paths directly into the terminal input field, ready for a command or a TUI that accepts file paths. Progress, successful paths, and failures remain visible in transfer history.
+
 ### SSH tunnels for private services
 
 **Motivation:** Development services are often bound to a remote loopback interface or private network. Port forwarding lets the phone reach those services without exposing them publicly.
