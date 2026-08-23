@@ -18,7 +18,7 @@ Mobile SSH tools often stop at “connect and type commands”. In practice, dev
 
 ### Workspace-aware server profiles
 
-<u><em>Keep separate directories, commands, and terminal settings for multiple projects on the same server.</em></u>
+<ins><em>Keep separate directories, commands, and terminal settings for multiple projects on the same server.</em></ins>
 
 **Motivation:** One server can host multiple projects or environments. A single flat connection record forces users to repeatedly re-enter working directories, terminal preferences, and post-connect commands, increasing the chance of using the wrong environment.
 
@@ -26,7 +26,7 @@ Mobile SSH tools often stop at “connect and type commands”. In practice, dev
 
 ### Long-running SSH sessions
 
-<u><em>Long-running remote commands keep running when the phone is backgrounded or locked.</em></u>
+<ins><em>Long-running remote commands keep running when the phone is backgrounded or locked.</em></ins>
 
 **Motivation:** Backgrounding or locking a phone should not terminate an important shell task. Binding the SSH connection directly to a screen makes that failure mode almost inevitable.
 
@@ -34,7 +34,7 @@ Mobile SSH tools often stop at “connect and type commands”. In practice, dev
 
 ### Observable and recoverable SFTP transfers
 
-<u><em>Browse the remote file tree and transfer files between the phone and the remote host without opening a separate SFTP tool, with progress, queues, and recovery after temporary interruptions.</em></u>
+<ins><em>Browse the remote file tree and transfer files between the phone and the remote host without opening a separate SFTP tool, with progress, queues, and recovery after temporary interruptions.</em></ins>
 
 **Motivation:** On a phone, users need to know whether a transfer is queued, progressing, paused, or recoverable after a failure. A fire-and-forget upload is not a usable file workflow.
 
@@ -42,7 +42,7 @@ Mobile SSH tools often stop at “connect and type commands”. In practice, dev
 
 ### Terminal upload with automatic path insertion
 
-<u><em>Choose a file in the mobile SSH terminal, upload it remotely, and hand the inserted path to Codex for reading and analysis.</em></u>
+<ins><em>Choose a file in the mobile SSH terminal, upload it remotely, and hand the inserted path to Codex for reading and analysis.</em></ins>
 
 **Motivation:** When running Codex or another capable agent through SSH on a phone, uploading the file is only half the problem. The agent can read and analyze a file once it receives the remote path, but manually locating that path and switching back to the terminal is tedious and especially awkward on a touch screen.
 
@@ -50,7 +50,7 @@ Mobile SSH tools often stop at “connect and type commands”. In practice, dev
 
 ### SSH tunnels for private services
 
-<u><em>Open a remote private web service or development endpoint directly on the phone through an SSH tunnel.</em></u>
+<ins><em>Open a remote private web service or development endpoint directly on the phone through an SSH tunnel.</em></ins>
 
 **Motivation:** Development services are often bound to a remote loopback interface or private network. Port forwarding lets the phone reach those services without exposing them publicly.
 
@@ -58,7 +58,7 @@ Mobile SSH tools often stop at “connect and type commands”. In practice, dev
 
 ### Explicit credential and host-key boundaries
 
-<u><em>Keep passwords and private keys in protected device storage and verify the server identity before trusting a connection.</em></u>
+<ins><em>Keep passwords and private keys in protected device storage and verify the server identity before trusting a connection.</em></ins>
 
 **Motivation:** SSH credentials and host identity are high-value security material. Encrypting only the database, or passing plaintext credentials through service intents, is not a sufficient boundary.
 
