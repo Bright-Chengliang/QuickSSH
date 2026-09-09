@@ -59,6 +59,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import java.util.concurrent.Executor
 import com.quickssh.app.data.AppDatabase
 import com.quickssh.app.data.SshConfig
+import com.quickssh.app.data.SshServerGroup
 import com.quickssh.app.data.SshConfigBackupCodec
 import com.quickssh.app.data.SshConfigBackupRecord
 import com.quickssh.app.data.SshTunnelPreset
@@ -84,11 +85,13 @@ import com.quickssh.app.service.TunnelStatus
 import com.quickssh.app.service.terminalQuickUploadDirectory
 import com.quickssh.app.ui.screens.ActiveSessionsScreen
 import com.quickssh.app.ui.screens.AppLanguage
+import com.quickssh.app.ui.screens.EditServerDialog
 import com.quickssh.app.ui.screens.LocalQuickSshLanguage
 import com.quickssh.app.ui.screens.QuickSshBottomBar
 import com.quickssh.app.ui.screens.SettingsScreen
 import com.quickssh.app.ui.screens.SshAddScreen
 import com.quickssh.app.ui.screens.SshListScreen
+import com.quickssh.app.ui.screens.TerminalHistoryScreen
 import com.quickssh.app.ui.screens.TerminalScreen
 import com.quickssh.app.ui.screens.TransferScreen
 import com.quickssh.app.ui.screens.RemoteDownloadPlanConfirmationUiState
@@ -118,7 +121,7 @@ import kotlinx.coroutines.withContext
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 
-private const val TERMINAL_SCROLLBACK_MAX_LINES = 12000
+private const val TERMINAL_SCROLLBACK_MAX_LINES = 50000
 private const val DATABASE_FLOW_LOG_TAG = "QuickSSH-Database"
 
 internal fun databaseRetryDelayMillis(attempt: Long): Long {
@@ -242,6 +245,32 @@ internal fun remoteDownloadFileName(remotePath: String, entryName: String = ""):
         .ifBlank { "quickssh-download" }
         .take(160)
     return safeName
+}
+
+/**
+ * Returns the parent of a remote path for the explicit "Parent directory" action.
+ * The caller should try the requested path first: a dot in a directory name does
+ * not make it a file, and file-vs-directory detection belongs to the remote host.
+ */
+internal fun remoteParentPath(path: String): String {
+    val normalized = path.trim().replace('\\', '/').trimEnd('/')
+    if (normalized.isBlank() || normalized == ".") return "."
+    if (normalized == "/") return "/"
+
+    val slash = normalized.lastIndexOf('/')
+    if (slash < 0) return "."
+    if (slash == 0) return "/"
+
+    // Keep the root separator for Windows drive paths such as D:/folder.
+    if (slash == 2 && normalized.getOrNull(1) == ':') return normalized.substring(0, 3)
+    return normalized.substring(0, slash)
+}
+
+internal fun browseTargetDirectory(path: String): String {
+    val normalized = path.trim().replace('\\', '/')
+    if (normalized.isBlank()) return "."
+    if (normalized.length == 3 && normalized[1] == ':' && normalized[2] == '/') return normalized
+    return normalized.trimEnd('/').ifBlank { "." }
 }
 
 internal fun remoteRelativeParentPath(relativePath: String): String {
@@ -473,9 +502,14 @@ class MainActivity : FragmentActivity() {
         val transferServiceState by TransferForegroundService.transferState.collectAsState()
         val tunnelStates by TunnelForegroundService.tunnelStates.collectAsState()
         val activeTunnelCount = tunnelStates.count { it.status == TunnelStatus.CONNECTING || it.status == TunnelStatus.RUNNING }
-        var currentScreen by remember { mutableStateOf("LIST") } // LIST | ADD | TERMINAL | SETTINGS | SESSIONS | TRANSFER | TUNNELS | TUNNEL_WEB
+        var currentScreen by remember { mutableStateOf("LIST") } // LIST | ADD | TERMINAL | SETTINGS | SESSIONS | TRANSFER | TUNNELS | TUNNEL_WEB | TERMINAL_HISTORY
         var activeSessionId by remember { mutableStateOf<String?>(null) }
         var lastTerminalSessionId by remember { mutableStateOf<String?>(null) }
+        var terminalHistorySessionId by remember { mutableStateOf<String?>(null) }
+        var serverGroupToEdit by remember { mutableStateOf<SshServerGroup?>(null) }
+        var serverGroupDecryptedPassword by remember { mutableStateOf<String?>(null) }
+        var serverGroupConnectionTestStatus by remember { mutableStateOf("") }
+        var isTestingServerGroupConnection by remember { mutableStateOf(false) }
         var configToEdit by remember { mutableStateOf<SshConfig?>(null) }
         var isCopyMode by remember { mutableStateOf(false) }
         var decryptedPassword by remember { mutableStateOf<String?>(null) }
@@ -652,8 +686,8 @@ class MainActivity : FragmentActivity() {
         fun openTransferTask(task: TransferTaskUiState) {
             val uri = task.localUri
             if (uri != null) {
-                if (!ensureInstallPermissionIfNeeded(uri)) return
-                runCatching {
+                try {
+                    if (!ensureInstallPermissionIfNeeded(uri)) return
                     val mimeType = runCatching { contentResolver.getType(uri) }
                         .getOrNull()
                         ?: if (isApkUri(uri)) {
@@ -666,8 +700,24 @@ class MainActivity : FragmentActivity() {
                         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     }
                     startActivity(Intent.createChooser(viewIntent, "Open with"))
-                }.onFailure {
-                    Toast.makeText(this@MainActivity, "Unable to open this file. Check whether an app is available.", Toast.LENGTH_SHORT).show()
+                } catch (e: SecurityException) {
+                    // SecurityException from canRequestPackageInstalls or startActivity
+                    // when REQUEST_INSTALL_PACKAGES is not declared or not granted
+                    Toast.makeText(
+                        this@MainActivity,
+                        "Permission denied. Please allow APK installation in system settings.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    runCatching {
+                        startActivity(
+                            Intent(
+                                Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                                Uri.parse("package:$packageName")
+                            )
+                        )
+                    }
+                } catch (e: Exception) {
+                    Toast.makeText(this@MainActivity, "Unable to open this file: ${e.localizedMessage ?: e.javaClass.simpleName}", Toast.LENGTH_SHORT).show()
                 }
             } else if (task.remotePath.isNotBlank()) {
                 transferRemotePath = task.remotePath
@@ -747,17 +797,38 @@ class MainActivity : FragmentActivity() {
                 remoteBrowserStatus = "\u8bf7\u5148\u9009\u62e9\u670d\u52a1\u5668"
                 return
             }
+            // Always try the exact path first. A directory name may contain a dot;
+            // file-vs-directory handling is delegated to the remote SFTP server.
+            val browsePath = browseTargetDirectory(path)
+            transferRemotePath = browsePath
+            rememberTransferDownloadSelection(config, browsePath)
             isBrowsingRemote = true
             remoteBrowserStatus = "\u6b63\u5728\u8bfb\u53d6\u8fdc\u7aef\u76ee\u5f55..."
             scope.launch {
-                val result = transferHelper().listRemoteDirectory(config, path)
+                val result = transferHelper().listRemoteDirectory(config, browsePath)
                 remoteEntries.clear()
                 result.fold(
                     onSuccess = { entries ->
+                        transferRemotePath = browsePath
+                        rememberTransferDownloadSelection(config, browsePath)
                         remoteEntries.addAll(entries)
                         remoteBrowserStatus = if (entries.isEmpty()) "\u76ee\u5f55\u4e3a\u7a7a" else "\u5df2\u5217\u51fa ${entries.size} \u9879"
                     },
-                    onFailure = { remoteBrowserStatus = "\u8bfb\u53d6\u5931\u8d25\uff1a${it.localizedMessage ?: it.javaClass.simpleName}" }
+                    onFailure = { error ->
+                        // A file path can still be supplied by the download field;
+                        // only after the exact path fails do we try its parent.
+                        val parentPath = remoteParentPath(browsePath)
+                        val parentResult = transferHelper().listRemoteDirectory(config, parentPath)
+                        parentResult.fold(
+                            onSuccess = { entries ->
+                                transferRemotePath = parentPath
+                                rememberTransferDownloadSelection(config, parentPath)
+                                remoteEntries.addAll(entries)
+                                remoteBrowserStatus = if (entries.isEmpty()) "\u76ee\u5f55\u4e3a\u7a7a" else "\u5df2\u5217\u51fa ${entries.size} \u9879"
+                            },
+                            onFailure = { remoteBrowserStatus = "\u8bfb\u53d6\u5931\u8d25\uff1a${error.localizedMessage ?: error.javaClass.simpleName}" }
+                        )
+                    }
                 )
                 isBrowsingRemote = false
             }
@@ -1489,6 +1560,15 @@ class MainActivity : FragmentActivity() {
                         connectionTestStatus = ""
                         currentScreen = "ADD"
                     },
+                    onEditServerClicked = { group ->
+                        runAfterSensitiveUnlock(biometricUnlockEnabled, "Edit server credentials") {
+                            val rep = group.workspaces.firstOrNull()
+                            serverGroupDecryptedPassword = KeystoreManager.decrypt(rep?.encryptedPassword ?: "")
+                            serverGroupConnectionTestStatus = ""
+                            isTestingServerGroupConnection = false
+                            serverGroupToEdit = group
+                        }
+                    },
                     onAddWorkspaceClicked = { serverConfig ->
                         configToEdit = serverConfig.copy(
                             id = 0,
@@ -1569,6 +1649,99 @@ class MainActivity : FragmentActivity() {
                         }
                     }
                 )
+
+                val activeServerGroup = serverGroupToEdit
+                if (activeServerGroup != null) {
+                    EditServerDialog(
+                        serverGroup = activeServerGroup,
+                        initialDecryptedPassword = serverGroupDecryptedPassword,
+                        isTestingConnection = isTestingServerGroupConnection,
+                        connectionTestStatus = serverGroupConnectionTestStatus,
+                        onDismiss = {
+                            serverGroupToEdit = null
+                            serverGroupDecryptedPassword = null
+                            serverGroupConnectionTestStatus = ""
+                            isTestingServerGroupConnection = false
+                        },
+                        onTestConnection = { sHost, sPort, sUser, sAuthType, sPass, sKey ->
+                            scope.launch {
+                                isTestingServerGroupConnection = true
+                                serverGroupConnectionTestStatus = "Testing connection..."
+                                val repConfig = activeServerGroup.workspaces.firstOrNull()
+                                val encryptedPassword = if (sAuthType == AUTH_TYPE_PASSWORD) {
+                                    when {
+                                        sPass.isNotEmpty() -> KeystoreManager.encrypt(sPass)
+                                        !repConfig?.encryptedPassword.isNullOrBlank() -> repConfig?.encryptedPassword
+                                        else -> null
+                                    }
+                                } else null
+                                val encryptedPrivateKey = if (sAuthType == AUTH_TYPE_PRIVATE_KEY) {
+                                    when {
+                                        sKey.isNotBlank() -> KeystoreManager.encrypt(sKey)
+                                        !repConfig?.encryptedPrivateKey.isNullOrBlank() -> repConfig?.encryptedPrivateKey
+                                        else -> null
+                                    }
+                                } else null
+                                val testConfig = SshConfig(
+                                    name = activeServerGroup.displayName,
+                                    host = sHost,
+                                    port = sPort,
+                                    username = sUser,
+                                    authType = sAuthType,
+                                    encryptedPassword = encryptedPassword,
+                                    encryptedPrivateKey = encryptedPrivateKey
+                                )
+                                val result = transferHelper().testConnection(testConfig)
+                                serverGroupConnectionTestStatus = result.fold(
+                                    onSuccess = { "Connection test passed" },
+                                    onFailure = { "Connection test failed: ${it.localizedMessage ?: it.javaClass.simpleName}" }
+                                )
+                                isTestingServerGroupConnection = false
+                            }
+                        },
+                        onSave = { sNodeId, sDisplayName, sHost, sPort, sUser, sAuthType, sPass, sKey ->
+                            scope.launch {
+                                val repConfig = activeServerGroup.workspaces.firstOrNull()
+                                val encryptedPassword = if (sAuthType == AUTH_TYPE_PASSWORD) {
+                                    when {
+                                        sPass.isNotEmpty() -> KeystoreManager.encrypt(sPass)
+                                        !repConfig?.encryptedPassword.isNullOrBlank() -> repConfig?.encryptedPassword
+                                        else -> null
+                                    }
+                                } else null
+                                val encryptedPrivateKey = if (sAuthType == AUTH_TYPE_PRIVATE_KEY) {
+                                    when {
+                                        sKey.isNotBlank() -> KeystoreManager.encrypt(sKey)
+                                        !repConfig?.encryptedPrivateKey.isNullOrBlank() -> repConfig?.encryptedPrivateKey
+                                        else -> null
+                                    }
+                                } else null
+
+                                db.sshConfigDao().updateServerNodeCredentials(
+                                    serverNodeId = sNodeId,
+                                    displayName = sDisplayName,
+                                    host = sHost,
+                                    port = sPort,
+                                    username = sUser,
+                                    authType = sAuthType,
+                                    encryptedPassword = encryptedPassword,
+                                    encryptedPrivateKey = encryptedPrivateKey
+                                )
+
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    "服务器及所有工作区配置已更新",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+
+                                serverGroupToEdit = null
+                                serverGroupDecryptedPassword = null
+                                serverGroupConnectionTestStatus = ""
+                                isTestingServerGroupConnection = false
+                            }
+                        }
+                    )
+                }
             }
             "SETTINGS" -> {
                 SettingsScreen(
@@ -1837,9 +2010,10 @@ class MainActivity : FragmentActivity() {
                     onBrowseRemote = { browseRemote() },
                     onRemoteEntryClicked = { entry ->
                         clearRemoteSelection()
-                        transferRemotePath = entry.path
-                        rememberTransferDownloadSelection(transferConfig, transferRemotePath)
-                        if (entry.isDirectory) browseRemote(entry.path)
+                        val entryPath = browseTargetDirectory(entry.path)
+                        transferRemotePath = entryPath
+                        rememberTransferDownloadSelection(transferConfig, entryPath)
+                        if (entry.isDirectory) browseRemote(entryPath)
                     },
                     onRemoteEntrySelectionToggle = { entry ->
                         toggleRemoteEntrySelection(entry)
@@ -1877,10 +2051,10 @@ class MainActivity : FragmentActivity() {
                         transferStatus = "已取消大目录下载计划"
                     },
                     onRemoteParentClicked = {
-                        val parent = transferRemotePath.trimEnd('/').substringBeforeLast('/', "")
-                        transferRemotePath = parent.ifBlank { "." }
-                        rememberTransferDownloadSelection(transferConfig, transferRemotePath)
-                        browseRemote(transferRemotePath)
+                        val parent = remoteParentPath(transferRemotePath)
+                        transferRemotePath = parent
+                        rememberTransferDownloadSelection(transferConfig, parent)
+                        browseRemote(parent)
                         clearRemoteSelection()
                     },
                     onTaskClicked = { task -> openTransferTask(task) },
@@ -2115,7 +2289,7 @@ class MainActivity : FragmentActivity() {
                         connectionTestStatus = ""
                         currentScreen = "LIST"
                     },
-                    onTestConnectionClicked = { sName, sHost, sPort, sUser, sAuthType, sPass, sPrivateKey, sWorkDir, sPostCommand, sFontSize, sWrapEnabled, sTerm, sShortcuts ->
+                    onTestConnectionClicked = { sName, sHost, sPort, sUser, sAuthType, sPass, sPrivateKey, sWorkDir, sPostCommand, sFontSize, sWrapEnabled, sTerm, sShortcuts, sPersistentSession ->
                         val existingEncryptedPassword = configToEdit?.encryptedPassword
                         val existingEncryptedPrivateKey = configToEdit?.encryptedPrivateKey
                         scope.launch {
@@ -2152,7 +2326,8 @@ class MainActivity : FragmentActivity() {
                                 terminalFontSizeSp = sFontSize,
                                 terminalWrapEnabled = sWrapEnabled,
                                 terminalTerm = sTerm,
-                                terminalShortcuts = if (sShortcuts.isNotBlank()) sShortcuts else null
+                                terminalShortcuts = if (sShortcuts.isNotBlank()) sShortcuts else null,
+                                persistentSessionMode = sPersistentSession
                             )
                             val result = transferHelper().testConnection(testConfig)
                             connectionTestStatus = result.fold(
@@ -2162,7 +2337,7 @@ class MainActivity : FragmentActivity() {
                             isTestingConnection = false
                         }
                     },
-                    onSaveClicked = { sName, sHost, sPort, sUser, sAuthType, sPass, sPrivateKey, sWorkDir, sPostCommand, sFontSize, sWrapEnabled, sTerm, sShortcuts ->
+                    onSaveClicked = { sName, sHost, sPort, sUser, sAuthType, sPass, sPrivateKey, sWorkDir, sPostCommand, sFontSize, sWrapEnabled, sTerm, sShortcuts, sPersistentSession, sServerDisplayName ->
                         scope.launch {
                             val existingEncryptedPassword = configToEdit?.encryptedPassword
                             val existingEncryptedPrivateKey = configToEdit?.encryptedPrivateKey
@@ -2199,7 +2374,9 @@ class MainActivity : FragmentActivity() {
                                     terminalWrapEnabled = sWrapEnabled,
                                     terminalTerm = sTerm,
                                     terminalShortcuts = if (sShortcuts.isNotBlank()) sShortcuts else null,
-                                    serverNodeId = configToEdit?.serverNodeId ?: 0L
+                                    persistentSessionMode = sPersistentSession,
+                                    serverNodeId = configToEdit?.serverNodeId ?: 0L,
+                                    serverDisplayName = if (sServerDisplayName.isNotBlank()) sServerDisplayName else null
                                 )
                                 db.sshConfigDao().insertConfig(newConfig)
                                 Toast.makeText(
@@ -2224,7 +2401,9 @@ class MainActivity : FragmentActivity() {
                                     terminalWrapEnabled = sWrapEnabled,
                                     terminalTerm = sTerm,
                                     terminalShortcuts = if (sShortcuts.isNotBlank()) sShortcuts else null,
-                                    updateTime = updatedAt
+                                    persistentSessionMode = sPersistentSession,
+                                    updateTime = updatedAt,
+                                    serverDisplayName = if (sServerDisplayName.isNotBlank()) sServerDisplayName else originalConfig.serverDisplayName
                                 )
                                 db.sshConfigDao().updateConfig(updatedConfig)
                                 Toast.makeText(this@MainActivity, "Configuration updated", Toast.LENGTH_SHORT).show()
@@ -2252,6 +2431,25 @@ class MainActivity : FragmentActivity() {
                             currentScreen = "TUNNELS"
                         },
                         onOpenExternal = ::openTunnelUrlExternal
+                    )
+                }
+            }
+            "TERMINAL_HISTORY" -> {
+                val histSessionId = terminalHistorySessionId
+                val helper = histSessionId?.let { boundService?.getSshHelper(it) }
+                val historyFile = helper?.historyFile
+                val sessionName = histSessionId?.let { terminalStates[it]?.config?.name } ?: "Session"
+                if (historyFile == null) {
+                    LaunchedEffect(Unit) {
+                        currentScreen = "TERMINAL"
+                    }
+                } else {
+                    TerminalHistoryScreen(
+                        historyFile = historyFile,
+                        sessionName = sessionName,
+                        onBackClicked = {
+                            currentScreen = "TERMINAL"
+                        }
                     )
                 }
             }
@@ -2313,6 +2511,10 @@ class MainActivity : FragmentActivity() {
                             openUploadFilePicker().onFailure { error ->
                                 state.quickUploadStatus = "Unable to open file picker: ${error.localizedMessage ?: error.javaClass.simpleName}"
                             }
+                        },
+                        onHistoryClicked = {
+                            terminalHistorySessionId = sessionId
+                            currentScreen = "TERMINAL_HISTORY"
                         },
                         onDisconnectClicked = {
                             stopSshService(sessionId)
@@ -2698,20 +2900,27 @@ class MainActivity : FragmentActivity() {
      * privileges.
      */
     private fun ensureInstallPermissionIfNeeded(uri: Uri): Boolean {
-        if (!isApkUri(uri) || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return true
+        if (!isApkUri(uri)) return true
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return true
 
-        val canRequestInstalls = runCatching {
+        val canRequestInstalls = try {
             packageManager.canRequestPackageInstalls()
-        }.getOrElse {
+        } catch (e: SecurityException) {
+            // On some devices, even calling canRequestPackageInstalls() throws
+            // SecurityException if REQUEST_INSTALL_PACKAGES is not granted at runtime.
+            // Treat this as "not allowed" and guide the user to settings.
+            false
+        } catch (e: Exception) {
             Toast.makeText(
                 this,
-                "Unable to verify APK install permission",
+                "Unable to verify APK install permission: ${e.localizedMessage}",
                 Toast.LENGTH_SHORT
             ).show()
             return false
         }
         if (canRequestInstalls) return true
 
+        // Permission not granted — redirect user to system settings to allow
         runCatching {
             startActivity(
                 Intent(
@@ -2776,6 +2985,8 @@ class MainActivity : FragmentActivity() {
                 terminalWrapEnabled = config.terminalWrapEnabled,
                 terminalTerm = config.terminalTerm,
                 terminalShortcuts = config.terminalShortcuts,
+                persistentSessionMode = config.persistentSessionMode,
+                serverDisplayName = config.serverDisplayName,
                 tunnelPresets = tunnelPresetsByWorkspace[config.id].orEmpty().map { preset ->
                     preset.toBackupRecord()
                 }
@@ -2910,6 +3121,8 @@ class MainActivity : FragmentActivity() {
             terminalWrapEnabled = terminalWrapEnabled,
             terminalTerm = terminalTerm,
             terminalShortcuts = terminalShortcuts,
+            persistentSessionMode = persistentSessionMode,
+            serverDisplayName = serverDisplayName,
             updateTime = updateTime
         )
     }

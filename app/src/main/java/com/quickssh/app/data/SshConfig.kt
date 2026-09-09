@@ -21,11 +21,22 @@ data class SshConfig(
     val terminalWrapEnabled: Boolean? = null,
     val terminalTerm: String = "xterm-256color",
     val terminalShortcuts: String? = null,
+    val persistentSessionMode: String = PERSISTENT_SESSION_NONE, // "none", "tmux", "screen", "auto"
     val updateTime: Long = System.currentTimeMillis(),
     val serverNodeId: Long = 0,
     val serverSortOrder: Int = 0,
-    val workspaceSortOrder: Int = 0
+    val workspaceSortOrder: Int = 0,
+    val serverDisplayName: String? = null
 )
+
+/** Persistent session mode: no terminal multiplexer wrapping. */
+const val PERSISTENT_SESSION_NONE = "none"
+/** Persistent session mode: use tmux (Linux/macOS only). */
+const val PERSISTENT_SESSION_TMUX = "tmux"
+/** Persistent session mode: use GNU screen (Linux/macOS only). */
+const val PERSISTENT_SESSION_SCREEN = "screen"
+/** Persistent session mode: auto-detect tmux then screen, fall back to none. */
+const val PERSISTENT_SESSION_AUTO = "auto"
 
 @Entity(
     tableName = "ssh_server_nodes",
@@ -70,6 +81,7 @@ data class SshWorkspaceProfile(
     val terminalWrapEnabled: Boolean? = null,
     val terminalTerm: String = "xterm-256color",
     val terminalShortcuts: String? = null,
+    @ColumnInfo(defaultValue = "none") val persistentSessionMode: String = PERSISTENT_SESSION_NONE,
     @ColumnInfo(defaultValue = "0") val sortOrder: Int = 0,
     val updateTime: Long = System.currentTimeMillis()
 )

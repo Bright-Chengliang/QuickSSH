@@ -24,6 +24,21 @@ class MainActivityDownloadHelperTest {
     }
 
     @Test
+    fun browseTargetDirectoryDoesNotTreatDottedFolderAsFile() {
+        assertEquals("D:/xxx/xxx/xxx", browseTargetDirectory("D:/xxx/xxx/xxx"))
+        assertEquals("D:/xxx/xxx/xxx", browseTargetDirectory("D:\\xxx\\xxx\\xxx\\"))
+        assertEquals("/srv/release.v2/build", browseTargetDirectory("/srv/release.v2/build"))
+    }
+
+    @Test
+    fun remoteParentPathPreservesWindowsDriveRoot() {
+        assertEquals("D:/xxx/xxx", remoteParentPath("D:/xxx/xxx/xxx"))
+        assertEquals("D:/", remoteParentPath("D:/xxx"))
+        assertEquals("/", remoteParentPath("/xxx"))
+        assertEquals(".", remoteParentPath("D:/"))
+    }
+
+    @Test
     fun remoteRelativePathHelpersSplitDirectoryTreePaths() {
         assertEquals("", remoteRelativeParentPath("folder"))
         assertEquals("folder/sub", remoteRelativeParentPath("folder/sub/file.txt"))

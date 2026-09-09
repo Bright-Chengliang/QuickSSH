@@ -93,6 +93,10 @@ class TerminalBuffer(
     private var savedStyle = Style.DEFAULT
     private var pendingEscape = ""
     private val pendingResponses = mutableListOf<String>()
+    private val pendingHistoryLines = ArrayDeque<String>()
+    private val historyLine = StringBuilder()
+    private var historySuppressed = false
+    private var historyChunkUnsafe = false
     private var lastPrintable = " "
     private var g0UsesDecSpecialGraphics = false
     private var g1UsesDecSpecialGraphics = false
@@ -156,6 +160,10 @@ class TerminalBuffer(
         focusEventMode = false
         mouseModes.clear()
         tabStops = defaultTabStops()
+        pendingHistoryLines.clear()
+        historyLine.setLength(0)
+        historySuppressed = false
+        historyChunkUnsafe = false
     }
 
     fun resize(size: Size): List<String> {
@@ -181,6 +189,9 @@ class TerminalBuffer(
     }
 
     fun appendRaw(raw: String) {
+        historyChunkUnsafe = pendingEscape.isNotEmpty() || containsHistoryUnsafeControl(raw)
+        if (!historyChunkUnsafe) historySuppressed = false
+
         var text = pendingEscape + raw
         pendingEscape = ""
 
@@ -195,7 +206,14 @@ class TerminalBuffer(
             val codePoint = text.codePointAt(i)
             val charCount = Character.charCount(codePoint)
             when (codePoint) {
-                ESC -> i += consumeEscape(text, i)
+                ESC -> {
+                    val consumed = consumeEscape(text, i)
+                    val sequence = text.substring(i, (i + consumed).coerceAtMost(text.length))
+                    if (sequence.matches(Regex("\\u001B\\[[0-9;:]*m"))) {
+                        recordHistoryText(sequence)
+                    }
+                    i += consumed
+                }
                 IND_C1 -> {
                     moveToNextLine()
                     i += charCount
@@ -213,7 +231,14 @@ class TerminalBuffer(
                     reverseIndex()
                     i += charCount
                 }
-                CSI_C1 -> i += consumeCsi(text, i, c1 = true)
+                CSI_C1 -> {
+                    val consumed = consumeCsi(text, i, c1 = true)
+                    val sequence = text.substring(i, (i + consumed).coerceAtMost(text.length))
+                    if (sequence.matches(Regex("\\u009B[0-9;:]*m"))) {
+                        recordHistoryText(sequence)
+                    }
+                    i += consumed
+                }
                 OSC_C1 -> i += consumeOsc(text, i, prefixLength = 1)
                 DCS_C1 -> i += consumeDcs(text, i, prefixLength = 1)
                 SOS_C1, PM_C1, APC_C1 -> i += consumeControlString(text, i, prefixLength = 1)
@@ -231,6 +256,7 @@ class TerminalBuffer(
                         i += consumed
                     } else {
                         putCodePoint(codePoint)
+                        recordHistoryText("[")
                         i += charCount
                     }
                 }
@@ -239,6 +265,7 @@ class TerminalBuffer(
                     i += charCount
                 }
                 '\n'.code -> {
+                    finishHistoryLine()
                     moveToNextLine()
                     i += charCount
                 }
@@ -253,6 +280,7 @@ class TerminalBuffer(
                 0, in 1..8, in 11..31, 127, in C1_CONTROL_CODE_RANGE -> i += charCount
                 else -> {
                     putCodePoint(codePoint)
+                    recordHistoryText(mapPrintableCodePoint(codePoint))
                     i += charCount
                 }
             }
@@ -264,6 +292,37 @@ class TerminalBuffer(
         val responses = pendingResponses.toList()
         pendingResponses.clear()
         return responses
+    }
+
+    /** Returns complete transcript lines produced since the previous drain. */
+    fun drainHistoryLines(): List<String> {
+        if (pendingHistoryLines.isEmpty()) return emptyList()
+        val lines = pendingHistoryLines.toList()
+        pendingHistoryLines.clear()
+        return lines
+    }
+
+    private fun recordHistoryText(text: String) {
+        if (text.isEmpty() || isInAlternateScreen || historySuppressed || historyChunkUnsafe) return
+        historyLine.append(text)
+    }
+
+    private fun finishHistoryLine() {
+        if (!isInAlternateScreen && !historySuppressed && !historyChunkUnsafe) {
+            pendingHistoryLines.addLast(historyLine.toString())
+        }
+        historyLine.setLength(0)
+        if (historyChunkUnsafe) historySuppressed = true
+    }
+
+    private fun markHistoryUnsafe() {
+        historyChunkUnsafe = true
+        historyLine.setLength(0)
+    }
+
+    private fun containsHistoryUnsafeControl(text: String): Boolean {
+        if (text.any { it.code in C1_CONTROL_CODE_RANGE }) return true
+        return Regex("\\u001B(?!\\[[0-9;:]*m)").containsMatchIn(text)
     }
 
     private fun putCodePoint(codePoint: Int) {
@@ -961,6 +1020,8 @@ class TerminalBuffer(
     }
 
     private fun enterAlternateScreen(clear: Boolean) {
+        markHistoryUnsafe()
+        historySuppressed = true
         if (!isInAlternateScreen) {
             screen = alternateScreenState
             isInAlternateScreen = true
@@ -971,6 +1032,8 @@ class TerminalBuffer(
 
     private fun leaveAlternateScreen() {
         if (!isInAlternateScreen) return
+        markHistoryUnsafe()
+        historySuppressed = true
         screen = primaryScreen
         isInAlternateScreen = false
         trimPrimaryScrollback()

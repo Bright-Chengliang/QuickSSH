@@ -838,6 +838,62 @@ class TerminalBufferTest {
     }
 
     @Test
+    fun historyDrainRecordsOnlyCompletePlainLines() {
+        val buffer = TerminalBuffer(maxLines = 20, initialColumns = 40, initialRows = 6)
+
+        buffer.appendRaw("A\nB")
+        assertEquals(listOf("A"), buffer.drainHistoryLines())
+
+        buffer.appendRaw("\nC\n")
+        assertEquals(listOf("B", "C"), buffer.drainHistoryLines())
+        assertTrue(buffer.drainHistoryLines().isEmpty())
+    }
+
+    @Test
+    fun historyDrainKeepsSgrTextButSkipsCursorRepaint() {
+        val buffer = TerminalBuffer(maxLines = 20, initialColumns = 40, initialRows = 6)
+
+        buffer.appendRaw("\u001B[32mready\u001B[0m\n")
+        assertEquals(listOf("\u001B[32mready\u001B[0m"), buffer.drainHistoryLines())
+
+        buffer.appendRaw("\u001B[H\u001B[2Jframe-1")
+        buffer.appendRaw("\u001B[H\u001B[2Jframe-2\n")
+        assertTrue(buffer.drainHistoryLines().isEmpty())
+
+        buffer.appendRaw("next\n")
+        assertEquals(listOf("next"), buffer.drainHistoryLines())
+    }
+
+    @Test
+    fun historyDrainDoesNotRecordAlternateScreenRepaints() {
+        val buffer = TerminalBuffer(maxLines = 20, initialColumns = 20, initialRows = 4)
+
+        buffer.appendRaw("before\n")
+        buffer.drainHistoryLines()
+        buffer.appendRaw("\u001B[?1049h\u001B[2J\u001B[Hscreen-a")
+        buffer.appendRaw("\u001B[Hscreen-b")
+        buffer.appendRaw("\u001B[?1049l")
+
+        assertTrue(buffer.drainHistoryLines().isEmpty())
+        buffer.appendRaw("after\n")
+        assertEquals(listOf("after"), buffer.drainHistoryLines())
+    }
+
+    @Test
+    fun historyDrainResumesAfterAnsiControlSequenceSplitAcrossChunks() {
+        val buffer = TerminalBuffer(maxLines = 20, initialColumns = 40, initialRows = 6)
+
+        buffer.appendRaw("before\u001B[")
+        assertTrue(buffer.drainHistoryLines().isEmpty())
+
+        buffer.appendRaw("2J")
+        assertTrue(buffer.drainHistoryLines().isEmpty())
+
+        buffer.appendRaw("after\n")
+        assertEquals(listOf("after"), buffer.drainHistoryLines())
+    }
+
+    @Test
     fun codexStyleHeavyStreamingStaysBoundedAndKeepsLatestOutput() {
         val buffer = TerminalBuffer(maxLines = 1000, initialColumns = 80, initialRows = 24)
 

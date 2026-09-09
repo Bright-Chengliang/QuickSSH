@@ -83,6 +83,7 @@ fun TerminalScreen(
     pendingInputInsertion: String? = null,
     onPendingInputInsertionConsumed: () -> Unit = {},
     onQuickUploadClicked: () -> Unit = {},
+    onHistoryClicked: () -> Unit = {},
     onDisconnectClicked: () -> Unit
 ) {
     val effectiveAutoWrap = config.terminalWrapEnabled ?: autoWrapEnabled
@@ -455,6 +456,13 @@ fun TerminalScreen(
                         enabled = true,
                         compact = isLandscape,
                         onClick = onQuickUploadClicked
+                    )
+                    TerminalInputIconButton(
+                        drawableResId = R.drawable.ic_open_in_browser,
+                        contentDescription = "History",
+                        enabled = true,
+                        compact = isLandscape,
+                        onClick = onHistoryClicked
                     )
                     TerminalInputIconButton(
                         drawableResId = R.drawable.ic_keyboard_return,

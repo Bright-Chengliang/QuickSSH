@@ -32,6 +32,10 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.style.TextOverflow
+import com.quickssh.app.data.PERSISTENT_SESSION_AUTO
+import com.quickssh.app.data.PERSISTENT_SESSION_NONE
+import com.quickssh.app.data.PERSISTENT_SESSION_SCREEN
+import com.quickssh.app.data.PERSISTENT_SESSION_TMUX
 import com.quickssh.app.data.SshConfig
 import com.quickssh.app.service.AUTH_TYPE_PASSWORD
 import com.quickssh.app.service.AUTH_TYPE_PRIVATE_KEY
@@ -45,8 +49,8 @@ fun SshAddScreen(
     connectionTestStatus: String = "",
     isTestingConnection: Boolean = false,
     onBackClicked: () -> Unit,
-    onTestConnectionClicked: (name: String, host: String, port: Int, user: String, authType: String, password: String, privateKey: String, workDirectory: String, postConnectCommand: String, terminalFontSizeSp: Int, terminalWrapEnabled: Boolean?, terminalTerm: String, terminalShortcuts: String) -> Unit,
-    onSaveClicked: (name: String, host: String, port: Int, user: String, authType: String, password: String, privateKey: String, workDirectory: String, postConnectCommand: String, terminalFontSizeSp: Int, terminalWrapEnabled: Boolean?, terminalTerm: String, terminalShortcuts: String) -> Unit
+    onTestConnectionClicked: (name: String, host: String, port: Int, user: String, authType: String, password: String, privateKey: String, workDirectory: String, postConnectCommand: String, terminalFontSizeSp: Int, terminalWrapEnabled: Boolean?, terminalTerm: String, terminalShortcuts: String, persistentSessionMode: String) -> Unit,
+    onSaveClicked: (name: String, host: String, port: Int, user: String, authType: String, password: String, privateKey: String, workDirectory: String, postConnectCommand: String, terminalFontSizeSp: Int, terminalWrapEnabled: Boolean?, terminalTerm: String, terminalShortcuts: String, persistentSessionMode: String, serverDisplayName: String) -> Unit
 ) {
     val language = LocalQuickSshLanguage.current
     val isEditing = configToEdit != null && !isCopyMode
@@ -58,6 +62,9 @@ fun SshAddScreen(
         disabledBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
     )
 
+    var serverDisplayName by remember(configToEdit?.id, configToEdit?.serverDisplayName, isCopyMode) {
+        mutableStateOf(configToEdit?.serverDisplayName ?: "")
+    }
     var name by remember(configToEdit?.id, configToEdit?.name, isCopyMode) {
         mutableStateOf(configToEdit?.name ?: "")
     }
@@ -96,6 +103,9 @@ fun SshAddScreen(
     }
     var terminalShortcuts by remember(configToEdit?.id, configToEdit?.terminalShortcuts, isCopyMode) {
         mutableStateOf(configToEdit?.terminalShortcuts ?: "")
+    }
+    var persistentSessionMode by remember(configToEdit?.id, configToEdit?.persistentSessionMode, isCopyMode) {
+        mutableStateOf(configToEdit?.persistentSessionMode ?: PERSISTENT_SESSION_NONE)
     }
     var showErrors by remember { mutableStateOf(false) }
 
@@ -147,16 +157,46 @@ fun SshAddScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            if (!lockedServerFields) {
+                OutlinedTextField(
+                    value = serverDisplayName,
+                    onValueChange = { serverDisplayName = it },
+                    label = { Text(language.text("服务器备注 / 名称", "Server remark / name")) },
+                    placeholder = { Text(language.text("例如：生产服务器、开发测试机", "e.g. Production server, Test box")) },
+                    supportingText = {
+                        Text(
+                            language.text(
+                                "对此服务器卡片生效，留空时默认显示 用户名@主机:端口",
+                                "Applies to this server card, defaults to user@host:port"
+                            )
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+            }
+
             OutlinedTextField(
                 value = name,
                 onValueChange = { name = it },
-                label = { Text("Workspace label") },
-                placeholder = { Text("Example: Production deploy") },
+                label = { Text(language.text("工作区标签 / 名称", "Workspace label")) },
+                placeholder = { Text(language.text("例如：默认工作区、发布部署", "e.g. Default workspace, Production deploy")) },
                 isError = nameError,
-                supportingText = { if (nameError) Text("Workspace label is required") },
+                supportingText = { if (nameError) Text(language.text("工作区标签不能为空", "Workspace label is required")) },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
+
+            if (isEditing && !lockedServerFields) {
+                Text(
+                    text = language.text(
+                        "服务器连接配置（修改将同步应用到此卡片下所有工作区）",
+                        "Server credentials (changes sync to all workspaces in this card)"
+                    ),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -331,6 +371,44 @@ fun SshAddScreen(
                 modifier = Modifier.fillMaxWidth()
             )
 
+            Text(
+                language.text("持久会话（防断线）", "Persistent session (anti-disconnect)"),
+                style = MaterialTheme.typography.titleSmall
+            )
+            Text(
+                language.text(
+                    "开启后，远端命令在 tmux/screen 中运行，SSH 断开后不会中断。仅限 Linux/macOS 远程。",
+                    "When enabled, remote commands run inside tmux/screen and survive SSH disconnections. Linux/macOS remote only."
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.outline
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                FilterChip(
+                    selected = persistentSessionMode == PERSISTENT_SESSION_NONE,
+                    onClick = { persistentSessionMode = PERSISTENT_SESSION_NONE },
+                    label = { Text(language.text("关闭", "Off")) }
+                )
+                FilterChip(
+                    selected = persistentSessionMode == PERSISTENT_SESSION_AUTO,
+                    onClick = { persistentSessionMode = PERSISTENT_SESSION_AUTO },
+                    label = { Text(language.text("自动", "Auto")) }
+                )
+                FilterChip(
+                    selected = persistentSessionMode == PERSISTENT_SESSION_TMUX,
+                    onClick = { persistentSessionMode = PERSISTENT_SESSION_TMUX },
+                    label = { Text("tmux") }
+                )
+                FilterChip(
+                    selected = persistentSessionMode == PERSISTENT_SESSION_SCREEN,
+                    onClick = { persistentSessionMode = PERSISTENT_SESSION_SCREEN },
+                    label = { Text("screen") }
+                )
+            }
+
             FeedbackOutlinedButton(
                 onClick = {
                     showErrors = true
@@ -348,7 +426,8 @@ fun SshAddScreen(
                             parsedTerminalFontSize ?: 12,
                             terminalWrapChoice,
                             terminalTerm.trim(),
-                            terminalShortcuts.trim()
+                            terminalShortcuts.trim(),
+                            persistentSessionMode
                         )
                     }
                 },
@@ -384,7 +463,9 @@ fun SshAddScreen(
                             parsedTerminalFontSize ?: 12,
                             terminalWrapChoice,
                             terminalTerm.trim(),
-                            terminalShortcuts.trim()
+                            terminalShortcuts.trim(),
+                            persistentSessionMode,
+                            serverDisplayName.trim()
                         )
                     }
                 },

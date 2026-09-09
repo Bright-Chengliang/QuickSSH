@@ -98,6 +98,58 @@ class SshConfigHierarchyTest {
     }
 
     @Test
+    fun groupedSshServersUsesCustomServerDisplayNameWhenPresent() {
+        val configs = listOf(
+            config(
+                id = 1,
+                name = "Deploy",
+                serverDisplayName = "生产服务器",
+                serverSortOrder = 1
+            ),
+            config(
+                id = 2,
+                name = "Logs",
+                serverDisplayName = "生产服务器",
+                serverSortOrder = 1
+            )
+        )
+
+        val groups = groupedSshServers(configs)
+
+        assertEquals(1, groups.size)
+        assertEquals("生产服务器", groups.first().displayName)
+        assertEquals("root@example.com:22", groups.first().hostLabel)
+    }
+
+    @Test
+    fun filterSshConfigsMatchesServerDisplayName() {
+        val configs = listOf(
+            config(name = "Deploy", serverDisplayName = "生产服务器"),
+            config(name = "Logs", serverDisplayName = "测试机")
+        )
+
+        assertEquals(listOf("Deploy"), filterSshConfigs(configs, "生产").map { it.name })
+        assertEquals(listOf("Logs"), filterSshConfigs(configs, "测试").map { it.name })
+    }
+
+    @Test
+    fun serverNodeFieldsDifferDetectsServerDisplayNameChange() {
+        val original = config(name = "Deploy", serverDisplayName = "生产服务器")
+        val changed = original.copy(serverDisplayName = "测试服务器")
+
+        assertEquals(true, serverNodeFieldsDiffer(original, changed))
+    }
+
+    @Test
+    fun withServerNodeFieldsFromCopiesServerDisplayName() {
+        val workspace = config(name = "Logs")
+        val server = config(name = "Deploy", serverDisplayName = "生产服务器")
+
+        val result = workspace.withServerNodeFieldsFrom(server)
+        assertEquals("生产服务器", result.serverDisplayName)
+    }
+
+    @Test
     fun transferHistoryDefaultsSplitServerAndWorkspaceLabels() {
         val entry = TransferHistoryEntry(
             fileName = "app.apk",
@@ -118,7 +170,8 @@ class SshConfigHierarchyTest {
         updateTime: Long = 0,
         postConnectCommand: String? = null,
         serverSortOrder: Int = 0,
-        workspaceSortOrder: Int = 0
+        workspaceSortOrder: Int = 0,
+        serverDisplayName: String? = null
     ): SshConfig {
         return SshConfig(
             id = id,
@@ -132,7 +185,8 @@ class SshConfigHierarchyTest {
             postConnectCommand = postConnectCommand,
             updateTime = updateTime,
             serverSortOrder = serverSortOrder,
-            workspaceSortOrder = workspaceSortOrder
+            workspaceSortOrder = workspaceSortOrder,
+            serverDisplayName = serverDisplayName
         )
     }
 }

@@ -62,6 +62,14 @@ class SshConfigBackupCodecTest {
         assertEquals(emptyList<SshTunnelPresetBackupRecord>(), decoded.single().tunnelPresets)
     }
 
+    @Test
+    fun backupRoundTripPreservesServerDisplayName() {
+        val record = backupRecord().copy(serverDisplayName = "生产跳板机")
+        val decoded = SshConfigBackupCodec.decode(SshConfigBackupCodec.encode(listOf(record)))
+
+        assertEquals("生产跳板机", decoded.first().serverDisplayName)
+    }
+
     private fun backupRecord(): SshConfigBackupRecord {
         return SshConfigBackupRecord(
             name = "Demo",

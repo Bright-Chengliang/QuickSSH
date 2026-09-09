@@ -4,7 +4,8 @@ data class SshServerGroup(
     val key: String,
     val displayName: String,
     val hostLabel: String,
-    val workspaces: List<SshConfig>
+    val workspaces: List<SshConfig>,
+    val serverNodeId: Long = 0L
 )
 
 fun SshConfig.serverIdentityKey(): String {
@@ -25,7 +26,8 @@ fun SshConfig.transferContextLabel(): String {
 }
 
 fun serverNodeFieldsDiffer(left: SshConfig, right: SshConfig): Boolean {
-    return left.host != right.host ||
+    return left.serverDisplayName != right.serverDisplayName ||
+        left.host != right.host ||
         left.port != right.port ||
         left.username != right.username ||
         left.authType != right.authType ||
@@ -35,6 +37,7 @@ fun serverNodeFieldsDiffer(left: SshConfig, right: SshConfig): Boolean {
 
 fun SshConfig.withServerNodeFieldsFrom(serverConfig: SshConfig): SshConfig {
     return copy(
+        serverDisplayName = serverConfig.serverDisplayName,
         host = serverConfig.host,
         port = serverConfig.port,
         username = serverConfig.username,
@@ -56,11 +59,13 @@ fun groupedSshServers(configs: List<SshConfig>): List<SshServerGroup> {
                     .thenByDescending { it.id }
             )
             val first = sortedWorkspaces.first()
+            val serverTitle = first.serverDisplayName?.takeIf { it.isNotBlank() } ?: first.serverNodeLabel()
             SshServerGroup(
                 key = key,
-                displayName = first.serverNodeLabel(),
+                displayName = serverTitle,
                 hostLabel = first.serverNodeLabel(),
-                workspaces = sortedWorkspaces
+                workspaces = sortedWorkspaces,
+                serverNodeId = first.serverNodeId
             )
         }
         .sortedWith(
@@ -86,6 +91,7 @@ fun filterSshConfigs(configs: List<SshConfig>, query: String): List<SshConfig> {
     if (normalizedQuery.isBlank()) return configs
     return configs.filter { config ->
         listOf(
+            config.serverDisplayName.orEmpty(),
             config.name,
             config.host,
             config.username,

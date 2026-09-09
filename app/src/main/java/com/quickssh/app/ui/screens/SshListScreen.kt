@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -34,10 +35,12 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -75,6 +78,7 @@ fun SshListScreen(
     configs: List<SshConfig>,
     bottomBar: @Composable () -> Unit,
     onAddClicked: () -> Unit,
+    onEditServerClicked: (SshServerGroup) -> Unit,
     onAddWorkspaceClicked: (SshConfig) -> Unit,
     onConnectClicked: (SshConfig) -> Unit,
     onEditClicked: (SshConfig) -> Unit,
@@ -85,11 +89,12 @@ fun SshListScreen(
 ) {
     val language = LocalQuickSshLanguage.current
     var searchQuery by remember { mutableStateOf("") }
+    var isEditMode by remember { mutableStateOf(false) }
     val filteredConfigs by remember(configs, searchQuery) { derivedStateOf { filterSshConfigs(configs, searchQuery) } }
     val groups by remember(filteredConfigs) { derivedStateOf { groupedSshServers(filteredConfigs) } }
     val groupByKey = remember(groups) { groups.associateBy { it.key } }
     val orderedGroupKeys = rememberSyncedOrder(groups.map { it.key })
-    val reorderEnabled = searchQuery.isBlank()
+    val reorderEnabled = isEditMode && searchQuery.isBlank()
     val groupSpacingPx = with(LocalDensity.current) { 10.dp.roundToPx() }
     val groupReorderState = remember(groupSpacingPx) { VerticalDragReorderState<String>(groupSpacingPx) }
     val expandedGroups = remember { mutableStateMapOf<String, Boolean>() }
@@ -129,8 +134,27 @@ fun SshListScreen(
                     text = language.text("${configs.size} 个配置", "${configs.size} profiles"),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(end = 4.dp)
+                    modifier = Modifier.padding(end = 6.dp)
                 )
+                if (configs.isNotEmpty()) {
+                    FilterChip(
+                        selected = isEditMode,
+                        onClick = { isEditMode = !isEditMode },
+                        label = {
+                            Text(
+                                text = if (isEditMode) language.text("完成", "Done") else language.text("排序", "Reorder")
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = if (isEditMode) Icons.Default.Check else Icons.Default.Menu,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        },
+                        modifier = Modifier.padding(end = 4.dp)
+                    )
+                }
                 FeedbackIconButton(
                     imageVector = Icons.Default.Add,
                     contentDescription = language.text("添加服务器", "Add server"),
@@ -138,6 +162,37 @@ fun SshListScreen(
                     modifier = Modifier.size(44.dp),
                     tint = MaterialTheme.colorScheme.primary
                 )
+            }
+
+            if (isEditMode) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Menu,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = language.text(
+                                "编辑排序模式已开启：拖动右侧手柄可调整卡片或工作区顺序",
+                                "Reorder mode active: drag handles on the right to reorder"
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
+                }
             }
 
             if (configs.isNotEmpty()) {
@@ -223,6 +278,7 @@ fun SshListScreen(
                         SshServerNodeCard(
                             group = group,
                             expanded = isExpanded,
+                            isEditMode = isEditMode,
                             modifier = Modifier
                                 .onSizeChanged { groupReorderState.onMeasured(groupKey, it.height) }
                                 .zIndex(if (isDragging) 1f else 0f)
@@ -250,6 +306,7 @@ fun SshListScreen(
                             },
                             reorderEnabled = reorderEnabled,
                             onToggleExpanded = { expandedGroups[group.key] = !isExpanded },
+                            onEditServer = { onEditServerClicked(group) },
                             onAddWorkspace = { onAddWorkspaceClicked(group.workspaces.first()) },
                             onConnectWorkspace = onConnectClicked,
                             onEditWorkspace = onEditClicked,
@@ -268,10 +325,12 @@ fun SshListScreen(
 private fun SshServerNodeCard(
     group: SshServerGroup,
     expanded: Boolean,
+    isEditMode: Boolean,
     modifier: Modifier = Modifier,
     reorderEnabled: Boolean,
     reorderHandle: @Composable () -> Unit,
     onToggleExpanded: () -> Unit,
+    onEditServer: () -> Unit,
     onAddWorkspace: () -> Unit,
     onConnectWorkspace: (SshConfig) -> Unit,
     onEditWorkspace: (SshConfig) -> Unit,
@@ -279,6 +338,7 @@ private fun SshServerNodeCard(
     onDeleteWorkspace: (SshConfig) -> Unit,
     onReorderWorkspaces: (Long, List<Long>) -> Unit
 ) {
+    val language = LocalQuickSshLanguage.current
     val workspaceSpacingPx = with(LocalDensity.current) { 8.dp.roundToPx() }
     val workspaceDragState = remember(group.key, workspaceSpacingPx) {
         VerticalDragReorderState<Long>(workspaceSpacingPx)
@@ -318,21 +378,37 @@ private fun SshServerNodeCard(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
+                        val subtitle = if (group.displayName != group.hostLabel) {
+                            "${group.hostLabel} · ${group.workspaces.size} workspace${if (group.workspaces.size == 1) "" else "s"}"
+                        } else {
+                            "${group.workspaces.size} workspace${if (group.workspaces.size == 1) "" else "s"}"
+                        }
                         Text(
-                            text = "${group.workspaces.size} workspace${if (group.workspaces.size == 1) "" else "s"}",
+                            text = subtitle,
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.outline
+                            color = MaterialTheme.colorScheme.outline,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
-                reorderHandle()
+                FeedbackIconButton(
+                    imageVector = Icons.Default.Edit,
+                    contentDescription = language.text("编辑服务器配置", "Edit server configuration"),
+                    onClick = onEditServer,
+                    modifier = Modifier.size(36.dp),
+                    tint = MaterialTheme.colorScheme.secondary
+                )
                 FeedbackIconButton(
                     imageVector = Icons.Default.Add,
-                    contentDescription = "Add workspace",
+                    contentDescription = language.text("添加工作区", "Add workspace"),
                     onClick = onAddWorkspace,
                     modifier = Modifier.size(36.dp),
                     tint = MaterialTheme.colorScheme.primary
                 )
+                if (isEditMode) {
+                    reorderHandle()
+                }
             }
             AnimatedVisibility(visible = expanded) {
                 Column(
@@ -349,34 +425,35 @@ private fun SshServerNodeCard(
                                 isDragging = isDragging
                             )
                             WorkspaceRow(
-                            config = config,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .onSizeChanged { workspaceDragState.onMeasured(workspaceId, it.height) }
-                                .zIndex(if (isDragging) 1f else 0f)
-                                .graphicsLayer {
-                                    translationY = workspaceDragState.placementOffset(workspaceId) +
-                                        placementAnimation.value +
-                                        if (isDragging) workspaceDragState.dragOffsetPx else 0f
-                                    alpha = if (isDragging) 0.96f else 1f
-                                },
-                            reorderHandle = {
-                                ReorderHandle(
-                                    enabled = reorderEnabled,
-                                    contentDescription = "Reorder workspace",
-                                    onDragStart = { workspaceDragState.startDrag(workspaceId) },
-                                    onDrag = { workspaceDragState.dragBy(it, orderedWorkspaceIds) },
-                                    onDragEnd = {
-                                        finishDragReorder(orderedWorkspaceIds, workspaceDragState) { orderedIds ->
-                                            onReorderWorkspaces(config.serverNodeId, orderedIds)
+                                config = config,
+                                isEditMode = isEditMode,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .onSizeChanged { workspaceDragState.onMeasured(workspaceId, it.height) }
+                                    .zIndex(if (isDragging) 1f else 0f)
+                                    .graphicsLayer {
+                                        translationY = workspaceDragState.placementOffset(workspaceId) +
+                                            placementAnimation.value +
+                                            if (isDragging) workspaceDragState.dragOffsetPx else 0f
+                                        alpha = if (isDragging) 0.96f else 1f
+                                    },
+                                reorderHandle = {
+                                    ReorderHandle(
+                                        enabled = reorderEnabled,
+                                        contentDescription = "Reorder workspace",
+                                        onDragStart = { workspaceDragState.startDrag(workspaceId) },
+                                        onDrag = { workspaceDragState.dragBy(it, orderedWorkspaceIds) },
+                                        onDragEnd = {
+                                            finishDragReorder(orderedWorkspaceIds, workspaceDragState) { orderedIds ->
+                                                onReorderWorkspaces(config.serverNodeId, orderedIds)
+                                            }
                                         }
-                                    }
-                                )
-                            },
-                            onConnect = { onConnectWorkspace(config) },
-                            onEdit = { onEditWorkspace(config) },
-                            onCopy = { onCopyWorkspace(config) },
-                            onDelete = { onDeleteWorkspace(config) }
+                                    )
+                                },
+                                onConnect = { onConnectWorkspace(config) },
+                                onEdit = { onEditWorkspace(config) },
+                                onCopy = { onCopyWorkspace(config) },
+                                onDelete = { onDeleteWorkspace(config) }
                             )
                         }
                     }
@@ -389,6 +466,7 @@ private fun SshServerNodeCard(
 @Composable
 private fun WorkspaceRow(
     config: SshConfig,
+    isEditMode: Boolean,
     modifier: Modifier = Modifier,
     reorderHandle: @Composable () -> Unit,
     onConnect: () -> Unit,
@@ -444,7 +522,9 @@ private fun WorkspaceRow(
                         )
                     }
                 }
-                reorderHandle()
+                if (isEditMode) {
+                    reorderHandle()
+                }
             }
             Row(
                 modifier = Modifier.fillMaxWidth().padding(top = 6.dp),

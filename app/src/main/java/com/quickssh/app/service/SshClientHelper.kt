@@ -1,6 +1,10 @@
 package com.quickssh.app.service
 
 import android.content.Context
+import com.quickssh.app.data.PERSISTENT_SESSION_AUTO
+import com.quickssh.app.data.PERSISTENT_SESSION_NONE
+import com.quickssh.app.data.PERSISTENT_SESSION_SCREEN
+import com.quickssh.app.data.PERSISTENT_SESSION_TMUX
 import com.quickssh.app.data.SshConfig
 import com.quickssh.app.security.KeystoreManager
 import com.quickssh.app.utils.TerminalBuffer
@@ -41,14 +45,17 @@ class SshClientHelper(
     companion object {
         private const val KEEPALIVE_INTERVAL_SECONDS = 20
         private const val SHELL_STARTUP_COMMAND_DELAY_MS = 600L
+        private const val PERSISTENT_SESSION_ATTACH_DELAY_MS = 400L
+        private const val PERSISTENT_SESSION_DETECT_TIMEOUT_SECONDS = 5L
         private const val WORK_DIRECTORY_COMMAND_DELAY_MS = 250L
         private const val POST_CONNECT_COMMAND_DELAY_MS = 250L
         private const val DIRECT_COMMAND_SETTLE_DELAY_MS = 120L
         private const val DIRECT_COMMAND_NUDGE_DELAY_MS = 80L
         private const val REMOTE_OUTPUT_QUIET_WINDOW_MS = 180L
         private const val REMOTE_OUTPUT_QUIET_MAX_WAIT_MS = 900L
-        private const val RECENT_OUTPUT_REPLAY_MAX_CHUNKS = 8192
-        private const val RECENT_OUTPUT_REPLAY_MAX_CHARS = 4 * 1024 * 1024
+        private const val HISTORY_BUFFER_MAX_LINES = 100_000
+        private const val RECENT_OUTPUT_REPLAY_MAX_CHUNKS = 32768
+        private const val RECENT_OUTPUT_REPLAY_MAX_CHARS = 16 * 1024 * 1024
         private const val CODEX_PREVIEW_EXEC_TIMEOUT_SECONDS = 45L
 
         init {
@@ -96,6 +103,12 @@ class SshClientHelper(
         maxChunks = RECENT_OUTPUT_REPLAY_MAX_CHUNKS,
         maxChars = RECENT_OUTPUT_REPLAY_MAX_CHARS
     )
+    private val historyBuffer = TerminalBuffer(
+        maxLines = HISTORY_BUFFER_MAX_LINES,
+        initialColumns = initialTerminalSize.columns,
+        initialRows = initialTerminalSize.rows
+    )
+    val historyFile = TerminalHistoryFile(appContext, "session-${config.id}-${System.currentTimeMillis()}")
 
     private val _status = MutableStateFlow(SshSessionStatus.CONNECTING)
     val status: StateFlow<SshSessionStatus> = _status.asStateFlow()
@@ -155,7 +168,12 @@ class SshClientHelper(
                 launchReaderRoutine(shell?.inputStream)
                 delay(SHELL_STARTUP_COMMAND_DELAY_MS)
 
-                if (!config.workDirectory.isNullOrBlank()) {
+                // Persistent session: attach to tmux/screen if configured (Linux/macOS only)
+                val persistentAttached = attachPersistentSession(config)
+
+                if (!config.workDirectory.isNullOrBlank() && !persistentAttached) {
+                    // When persistent session is attached, tmux/screen restores the previous
+                    // working directory automatically, so skip the auto-cd.
                     emitLog("\n[QuickSSH] Auto cd: ${config.workDirectory}\n")
                     waitForRemoteOutputQuiet()
                     writeCommandDirect(autoCdCommand(config.workDirectory))
@@ -163,7 +181,9 @@ class SshClientHelper(
                 }
 
                 val postConnectCommands = postConnectCommands(config.postConnectCommand)
-                if (postConnectCommands.isNotEmpty()) {
+                if (postConnectCommands.isNotEmpty() && !persistentAttached) {
+                    // Skip post-connect commands when attaching to an existing persistent
+                    // session, as the session state is already established.
                     emitLog("[QuickSSH] Running ${postConnectCommands.size} post-connect command(s)...\n")
                     postConnectCommands.forEachIndexed { index, command ->
                         waitForRemoteOutputQuiet()
@@ -172,7 +192,7 @@ class SshClientHelper(
                             delay(POST_CONNECT_COMMAND_DELAY_MS)
                         }
                     }
-                } else {
+                } else if (!persistentAttached) {
                     emitLog("[QuickSSH] No post-connect command configured.")
                 }
             } else {
@@ -235,6 +255,7 @@ class SshClientHelper(
     fun resizeTerminal(size: TerminalBuffer.Size) {
         val next = size.sanitized()
         if (next == terminalSize) return
+        historyBuffer.resize(next)
         terminalSize = next
         scope.launch(Dispatchers.IO) {
             try {
@@ -247,6 +268,85 @@ class SshClientHelper(
             } catch (e: Exception) {
                 emitLog("\n[QuickSSH Info] Failed to sync terminal size: ${e.localizedMessage}")
             }
+        }
+    }
+
+    /**
+     * Attempt to attach a persistent terminal session (tmux or screen) based on config.
+     * Returns true if a persistent session was attached (either existing or new),
+     * which means auto-cd and post-connect commands should be skipped.
+     *
+     * For Windows remote hosts (detected via workDirectory path), always returns false
+     * since tmux/screen are not available on Windows.
+     */
+    private suspend fun attachPersistentSession(config: SshConfig): Boolean {
+        val mode = config.persistentSessionMode.trim().lowercase()
+        if (mode == PERSISTENT_SESSION_NONE) return false
+
+        // Skip for Windows remote hosts — tmux/screen not available
+        if (!config.workDirectory.isNullOrBlank() && isWindowsPath(config.workDirectory)) {
+            emitLog("[QuickSSH] Persistent session skipped: Windows remote detected.")
+            return false
+        }
+
+        val sessionName = persistentSessionName(config.id)
+
+        val resolvedMode = when (mode) {
+            PERSISTENT_SESSION_TMUX -> {
+                if (detectRemoteCommand("tmux")) PERSISTENT_SESSION_TMUX else {
+                    emitLog("[QuickSSH] tmux not found on remote. Falling back to normal shell.")
+                    return false
+                }
+            }
+            PERSISTENT_SESSION_SCREEN -> {
+                if (detectRemoteCommand("screen")) PERSISTENT_SESSION_SCREEN else {
+                    emitLog("[QuickSSH] screen not found on remote. Falling back to normal shell.")
+                    return false
+                }
+            }
+            PERSISTENT_SESSION_AUTO -> {
+                when {
+                    detectRemoteCommand("tmux") -> PERSISTENT_SESSION_TMUX
+                    detectRemoteCommand("screen") -> PERSISTENT_SESSION_SCREEN
+                    else -> {
+                        emitLog("[QuickSSH] Neither tmux nor screen found. Using normal shell.")
+                        return false
+                    }
+                }
+            }
+            else -> return false
+        }
+
+        val command = when (resolvedMode) {
+            PERSISTENT_SESSION_TMUX -> persistentTmuxCommand(sessionName, config.workDirectory)
+            PERSISTENT_SESSION_SCREEN -> persistentScreenCommand(sessionName, config.workDirectory)
+            else -> return false
+        }
+
+        emitLog("\n[QuickSSH] Attaching persistent $resolvedMode session: $sessionName")
+        waitForRemoteOutputQuiet()
+        writeCommandDirect(command)
+        delay(PERSISTENT_SESSION_ATTACH_DELAY_MS)
+        return true
+    }
+
+    /**
+     * Detect whether a command is available on the remote host by running `which` or `command -v`.
+     */
+    private fun detectRemoteCommand(commandName: String): Boolean {
+        val client = sshClient ?: return false
+        return try {
+            client.startSession().use { session ->
+                val command = session.exec("command -v $commandName >/dev/null 2>&1 && echo YES || echo NO")
+                val output = command.inputStream.bufferedReader().readText().trim()
+                runCatching {
+                    command.join(PERSISTENT_SESSION_DETECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                    command.close()
+                }
+                output.contains("YES")
+            }
+        } catch (e: Exception) {
+            false
         }
     }
 
@@ -432,6 +532,8 @@ class SshClientHelper(
 
     private suspend fun emitLog(text: String) {
         recentOutputReplay.append(text)
+        historyBuffer.appendRaw(text)
+        historyFile.appendLines(historyBuffer.drainHistoryLines())
         _terminalOutput.emit(text)
     }
 
@@ -773,7 +875,44 @@ internal fun sanitizedTerminalTerm(term: String?): String {
     return trimmed.filter { it.isLetterOrDigit() || it == '-' || it == '_' }.take(32).ifBlank { "xterm-256color" }
 }
 
+/**
+ * Generate a stable, filesystem-safe session name for persistent terminal multiplexer sessions.
+ * Uses workspace config id to ensure each workspace gets its own session.
+ */
+internal fun persistentSessionName(configId: Long): String {
+    return "quickssh-$configId"
+}
 
+/**
+ * Build the tmux command that creates a new session or attaches to an existing one.
+ * `-A` means: attach to session if it exists, otherwise create a new one.
+ * If workDirectory is provided and is a Linux path, it's passed as the default-path for new sessions.
+ */
+internal fun persistentTmuxCommand(sessionName: String, workDirectory: String?): String {
+    val safeName = shellSingleQuoted(sessionName)
+    val cdPart = if (!workDirectory.isNullOrBlank() && !isWindowsPath(workDirectory)) {
+        " -c ${shellPathLiteral(workDirectory)}"
+    } else {
+        ""
+    }
+    // tmux new-session -A -s <name> [-c <dir>]
+    // -A: attach if session exists, create if not
+    // -s: session name
+    // -c: starting directory (only for new session creation)
+    return "tmux new-session -A -s $safeName$cdPart"
+}
 
-
-
+/**
+ * Build the screen command that creates a new session or reattaches to an existing one.
+ * `-dRR` means: reattach if possible, otherwise create; detach other clients if needed.
+ */
+internal fun persistentScreenCommand(sessionName: String, workDirectory: String?): String {
+    val safeName = shellSingleQuoted(sessionName)
+    // For screen, we need to cd first if there's a work directory, then start/attach screen.
+    // screen -dRR <name>: detach and reattach, creating if needed
+    return if (!workDirectory.isNullOrBlank() && !isWindowsPath(workDirectory)) {
+        "cd ${shellPathLiteral(workDirectory)} && screen -dRR $safeName"
+    } else {
+        "screen -dRR $safeName"
+    }
+}

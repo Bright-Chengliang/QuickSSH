@@ -65,14 +65,50 @@ interface SshConfigDao {
             else -> resolveServerNodeId(config, normalizedUpdateTime(config.updateTime))
         }
         val now = normalizedUpdateTime(config.updateTime)
-        val serverSortOrder = getServerNodeById(serverId)?.sortOrder ?: nextServerNodeSortOrder()
+        val existingServer = getServerNodeById(serverId)
+        val serverSortOrder = existingServer?.sortOrder ?: nextServerNodeSortOrder()
         val workspaceSortOrder = if (serverId == existingWorkspace.serverNodeId) {
             existingWorkspace.sortOrder
         } else {
             nextWorkspaceSortOrder(serverId)
         }
-        updateServerNode(config.toServerNode(id = serverId, updateTime = now, sortOrder = serverSortOrder))
+        val serverDisplayName = config.serverDisplayName?.trim()?.takeIf { it.isNotEmpty() }
+            ?: existingServer?.displayName
+        updateServerNode(
+            config.toServerNode(
+                id = serverId,
+                updateTime = now,
+                sortOrder = serverSortOrder,
+                defaultDisplayName = serverDisplayName
+            )
+        )
         updateWorkspace(config.toWorkspaceProfile(serverId, now, workspaceSortOrder))
+    }
+
+    @Transaction
+    suspend fun updateServerNodeCredentials(
+        serverNodeId: Long,
+        displayName: String,
+        host: String,
+        port: Int,
+        username: String,
+        authType: String,
+        encryptedPassword: String?,
+        encryptedPrivateKey: String?
+    ) {
+        val existing = getServerNodeById(serverNodeId) ?: return
+        val now = System.currentTimeMillis()
+        val updated = existing.copy(
+            displayName = displayName.trim().ifBlank { "$username@$host:$port" },
+            host = host.trim(),
+            port = port,
+            username = username.trim(),
+            authType = authType,
+            encryptedPassword = encryptedPassword,
+            encryptedPrivateKey = encryptedPrivateKey,
+            updateTime = now
+        )
+        updateServerNode(updated)
     }
 
     @Transaction
@@ -175,7 +211,14 @@ interface SshConfigDao {
             .takeIf { it > 0L }
             ?.let { getServerNodeById(it) }
         if (existingById != null) {
-            updateServerNode(config.toServerNode(existingById.id, updateTime, existingById.sortOrder))
+            updateServerNode(
+                config.toServerNode(
+                    id = existingById.id,
+                    updateTime = updateTime,
+                    sortOrder = existingById.sortOrder,
+                    defaultDisplayName = existingById.displayName
+                )
+            )
             return existingById.id
         }
 
@@ -186,19 +229,41 @@ interface SshConfigDao {
             authType = config.authType
         )
         if (existingByIdentity != null) {
-            updateServerNode(config.toServerNode(existingByIdentity.id, updateTime, existingByIdentity.sortOrder))
+            updateServerNode(
+                config.toServerNode(
+                    id = existingByIdentity.id,
+                    updateTime = updateTime,
+                    sortOrder = existingByIdentity.sortOrder,
+                    defaultDisplayName = existingByIdentity.displayName
+                )
+            )
             return existingByIdentity.id
         }
 
-        return insertServerNode(config.toServerNode(id = 0L, updateTime = updateTime, sortOrder = nextServerNodeSortOrder()))
+        return insertServerNode(
+            config.toServerNode(
+                id = 0L,
+                updateTime = updateTime,
+                sortOrder = nextServerNodeSortOrder(),
+                defaultDisplayName = config.serverDisplayName?.takeIf { it.isNotBlank() } ?: config.name
+            )
+        )
     }
 
-    private fun SshConfig.toServerNode(id: Long, updateTime: Long, sortOrder: Int): SshServerNode {
+    private fun SshConfig.toServerNode(
+        id: Long,
+        updateTime: Long,
+        sortOrder: Int,
+        defaultDisplayName: String? = null
+    ): SshServerNode {
         val normalizedHost = host.trim()
         val normalizedUsername = username.trim()
+        val resolvedDisplayName = serverDisplayName?.trim()?.takeIf { it.isNotEmpty() }
+            ?: defaultDisplayName?.trim()?.takeIf { it.isNotEmpty() }
+            ?: "$normalizedUsername@$normalizedHost:$port"
         return SshServerNode(
             id = id,
-            displayName = "$normalizedUsername@$normalizedHost:$port",
+            displayName = resolvedDisplayName,
             host = normalizedHost,
             port = port,
             username = normalizedUsername,
@@ -221,6 +286,7 @@ interface SshConfigDao {
             terminalWrapEnabled = terminalWrapEnabled,
             terminalTerm = terminalTerm.trim().ifBlank { "xterm-256color" },
             terminalShortcuts = terminalShortcuts?.trim()?.takeIf { it.isNotEmpty() },
+            persistentSessionMode = persistentSessionMode.trim().ifBlank { PERSISTENT_SESSION_NONE },
             sortOrder = sortOrder,
             updateTime = updateTime
         )
@@ -235,6 +301,7 @@ interface SshConfigDao {
             SELECT
                 w.id AS id,
                 w.name AS name,
+                s.displayName AS serverDisplayName,
                 s.host AS host,
                 s.port AS port,
                 s.username AS username,
@@ -247,6 +314,7 @@ interface SshConfigDao {
                 w.terminalWrapEnabled AS terminalWrapEnabled,
                 w.terminalTerm AS terminalTerm,
                 w.terminalShortcuts AS terminalShortcuts,
+                w.persistentSessionMode AS persistentSessionMode,
                 w.updateTime AS updateTime,
                 s.id AS serverNodeId,
                 s.sortOrder AS serverSortOrder,
