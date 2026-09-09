@@ -217,6 +217,43 @@ fun SshListScreen(
                 )
             }
 
+            if (searchQuery.isBlank() && configs.isNotEmpty() && configs.none { it.isLocalSession || it.authType == "LOCAL" }) {
+                Card(
+                    shape = RoundedCornerShape(8.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = language.text("✨ 新增：本地终端模式", "✨ New: Local Terminal Mode"),
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                text = language.text("无需联网，直接调用手机 Termux 或系统 Shell 与 AI 交互", "Run local Termux or system shell & AI without network"),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        FeedbackButton(
+                            onClick = onAddClicked,
+                            modifier = Modifier.padding(start = 8.dp)
+                        ) {
+                            Text(language.text("快速开启", "Try Now"))
+                        }
+                    }
+                }
+            }
+
             if (configs.isEmpty()) {
                 Box(
                     modifier = Modifier
@@ -372,12 +409,32 @@ private fun SshServerNodeCard(
                         contentDescription = if (expanded) "Collapse server" else "Expand server"
                     )
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = group.displayName,
-                            style = MaterialTheme.typography.titleMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = group.displayName,
+                                style = MaterialTheme.typography.titleMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            val isLocal = group.workspaces.firstOrNull()?.let { it.isLocalSession || it.authType == "LOCAL" } == true
+                            if (isLocal) {
+                                Surface(
+                                    shape = RoundedCornerShape(4.dp),
+                                    color = MaterialTheme.colorScheme.primaryContainer,
+                                    modifier = Modifier.padding(start = 2.dp)
+                                ) {
+                                    Text(
+                                        text = language.text("本地终端", "Local"),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                    )
+                                }
+                            }
+                        }
                         val subtitle = if (group.displayName != group.hostLabel) {
                             "${group.hostLabel} · ${group.workspaces.size} workspace${if (group.workspaces.size == 1) "" else "s"}"
                         } else {
@@ -478,7 +535,9 @@ private fun WorkspaceRow(
     Card(
         shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        modifier = modifier.fillMaxWidth()
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(interactionSource = interactionSource, indication = null) { onConnect() }
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
             Row(
@@ -487,9 +546,7 @@ private fun WorkspaceRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clickable(interactionSource = interactionSource, indication = null) { onConnect() }
+                    modifier = Modifier.weight(1f)
                 ) {
                     Text(
                         text = config.workspaceLabel(),

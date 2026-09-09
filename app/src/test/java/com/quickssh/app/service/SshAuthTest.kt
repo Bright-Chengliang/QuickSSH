@@ -28,9 +28,17 @@ class SshAuthTest {
             encryptedPassword = null,
             encryptedPrivateKey = "encrypted-key"
         )
+        val localConfig = SshConfig(
+            name = "local",
+            host = "localhost",
+            username = "local",
+            authType = AUTH_TYPE_LOCAL,
+            isLocalSession = true
+        )
 
         assertTrue(hasUsableCredential(passwordConfig))
         assertTrue(hasUsableCredential(keyConfig))
+        assertTrue(hasUsableCredential(localConfig))
         assertFalse(hasUsableCredential(passwordConfig.copy(encryptedPassword = null)))
         assertFalse(hasUsableCredential(keyConfig.copy(encryptedPrivateKey = null)))
     }
@@ -39,5 +47,6 @@ class SshAuthTest {
     fun authTypeLabelIsUserFacing() {
         assertEquals("密码", authTypeLabel(AUTH_TYPE_PASSWORD))
         assertEquals("私钥", authTypeLabel(AUTH_TYPE_PRIVATE_KEY))
+        assertEquals("本地", authTypeLabel(AUTH_TYPE_LOCAL))
     }
 }

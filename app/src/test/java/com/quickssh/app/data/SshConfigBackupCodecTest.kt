@@ -70,6 +70,39 @@ class SshConfigBackupCodecTest {
         assertEquals("生产跳板机", decoded.first().serverDisplayName)
     }
 
+    @Test
+    fun backupDecodeHandlesLocalOrZeroPortGracefullyWithoutThrowing() {
+        val json = """
+            {
+              "app": "QuickSSH",
+              "formatVersion": 2,
+              "servers": [
+                {
+                  "name": "本机",
+                  "host": "/system/bin/sh",
+                  "port": 0,
+                  "username": "local",
+                  "authType": "LOCAL"
+                },
+                {
+                  "name": "Valid Server",
+                  "host": "192.168.1.100",
+                  "port": 22,
+                  "username": "admin",
+                  "authType": "PASSWORD"
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val decoded = SshConfigBackupCodec.decode(json)
+        assertEquals(2, decoded.size)
+        assertEquals("本机", decoded[0].name)
+        assertEquals(0, decoded[0].port)
+        assertEquals("Valid Server", decoded[1].name)
+        assertEquals(22, decoded[1].port)
+    }
+
     private fun backupRecord(): SshConfigBackupRecord {
         return SshConfigBackupRecord(
             name = "Demo",

@@ -1,5 +1,6 @@
 package com.quickssh.app.ui.screens
 
+import com.quickssh.app.service.AUTH_TYPE_LOCAL
 import com.quickssh.app.service.AUTH_TYPE_PASSWORD
 import com.quickssh.app.service.AUTH_TYPE_PRIVATE_KEY
 import org.junit.Assert.assertFalse
@@ -7,6 +8,24 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SshAddScreenValidationTest {
+    @Test
+    fun localAuthNeverRequiresCredentials() {
+        assertFalse(
+            sshPasswordCredentialMissing(
+                authType = AUTH_TYPE_LOCAL,
+                password = "",
+                hasSavedPassword = false
+            )
+        )
+        assertFalse(
+            sshPrivateKeyCredentialMissing(
+                authType = AUTH_TYPE_LOCAL,
+                privateKey = "",
+                hasSavedPrivateKey = false
+            )
+        )
+    }
+
     @Test
     fun passwordAuthRequiresNewOrSavedPassword() {
         assertTrue(

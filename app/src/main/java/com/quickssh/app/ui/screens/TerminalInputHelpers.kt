@@ -9,6 +9,8 @@ internal fun shouldConfirmPaste(text: String): Boolean {
 internal fun shouldConfirmMultilineInputChange(previousInput: String, nextInput: String): Boolean {
     if (!shouldConfirmPaste(nextInput)) return false
     if (shouldConfirmPaste(previousInput)) return false
+    // Don't trigger paste confirm if the only difference is newline/carriage return from an Enter press
+    if (nextInput.replace("\r", "").replace("\n", "") == previousInput.replace("\r", "").replace("\n", "")) return false
     return nextInput.length > previousInput.length
 }
 

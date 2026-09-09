@@ -150,6 +150,24 @@ class SshConfigHierarchyTest {
     }
 
     @Test
+    fun localSessionIdentityKeyAndLabel() {
+        val localConfig = SshConfig(
+            id = 5,
+            name = "My Local Shell",
+            host = "/system/bin/sh",
+            port = 0,
+            username = "local",
+            authType = com.quickssh.app.service.AUTH_TYPE_LOCAL,
+            isLocalSession = true,
+            serverDisplayName = "本机"
+        )
+
+        assertEquals("local-node", localConfig.serverIdentityKey())
+        assertEquals("本机", localConfig.serverNodeLabel())
+        assertEquals("本机 / My Local Shell", localConfig.transferContextLabel())
+    }
+
+    @Test
     fun transferHistoryDefaultsSplitServerAndWorkspaceLabels() {
         val entry = TransferHistoryEntry(
             fileName = "app.apk",

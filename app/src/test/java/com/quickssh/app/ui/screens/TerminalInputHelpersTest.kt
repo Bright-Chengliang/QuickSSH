@@ -19,6 +19,8 @@ class TerminalInputHelpersTest {
         assertTrue(shouldConfirmMultilineInputChange("git ", "git add .\ngit status"))
         assertFalse(shouldConfirmMultilineInputChange("git add .\ngit status", "git add .\ngit diff"))
         assertFalse(shouldConfirmMultilineInputChange("git add .\ngit status", "git add ."))
+        assertFalse(shouldConfirmMultilineInputChange("ls", "ls\n"))
+        assertFalse(shouldConfirmMultilineInputChange("ls", "ls\r\n"))
     }
 
     @Test
@@ -270,5 +272,15 @@ class TerminalInputHelpersTest {
     fun terminalPastePayloadWrapsOnlyWhenBracketedPasteIsEnabled() {
         assertEquals("a\nb", terminalPastePayload("a\nb", bracketedPasteMode = false))
         assertEquals("\u001B[200~a\nb\u001B[201~", terminalPastePayload("a\nb", bracketedPasteMode = true))
+    }
+
+    @Test
+    fun compactKeysIncludesPageUpAndPageDownForQuickNavigation() {
+        val keys = compactKeys(applicationCursorKeys = false)
+        val labels = keys.map { it.label }
+        assertTrue("compactKeys should include PgUp", labels.contains("PgUp"))
+        assertTrue("compactKeys should include PgDn", labels.contains("PgDn"))
+        assertEquals("\u001B[5~", keys.first { it.label == "PgUp" }.sequence)
+        assertEquals("\u001B[6~", keys.first { it.label == "PgDn" }.sequence)
     }
 }

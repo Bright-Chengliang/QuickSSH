@@ -10,10 +10,14 @@ data class SshServerGroup(
 
 fun SshConfig.serverIdentityKey(): String {
     if (serverNodeId > 0L) return "server-node:$serverNodeId"
+    if (isLocalSession || authType == "LOCAL") return "local-node"
     return listOf(host.trim().lowercase(), port.toString(), username.trim(), authType).joinToString("|")
 }
 
 fun SshConfig.serverNodeLabel(): String {
+    if (isLocalSession || authType == "LOCAL") {
+        return serverDisplayName?.takeIf { it.isNotBlank() } ?: "Local Terminal"
+    }
     return "$username@$host:$port"
 }
 

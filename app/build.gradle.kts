@@ -12,8 +12,8 @@ android {
         applicationId = "com.quickssh.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 24
-        versionName = "1.22.1"
+        versionCode = 25
+        versionName = "1.23.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -48,6 +48,9 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+        jniLibs {
+            useLegacyPackaging = true
+        }
     }
 }
 
@@ -71,6 +74,10 @@ dependencies {
 
     // SSH Connection client
     implementation(libs.sshj)
+
+    // Termux Terminal Engine
+    implementation("com.github.termux.termux-app:terminal-view:v0.118.0")
+    implementation("com.github.termux.termux-app:terminal-emulator:v0.118.0")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")

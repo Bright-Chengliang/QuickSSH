@@ -10,6 +10,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -23,9 +25,12 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.quickssh.app.data.SshServerGroup
+import com.quickssh.app.service.AUTH_TYPE_LOCAL
 import com.quickssh.app.service.AUTH_TYPE_PASSWORD
 import com.quickssh.app.service.AUTH_TYPE_PRIVATE_KEY
+import com.quickssh.app.service.LocalEnvironmentDetector
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EditServerDialog(
     serverGroup: SshServerGroup,
@@ -37,6 +42,7 @@ fun EditServerDialog(
     onSave: (serverNodeId: Long, displayName: String, host: String, port: Int, username: String, authType: String, password: String, privateKey: String) -> Unit
 ) {
     val language = LocalQuickSshLanguage.current
+    val context = androidx.compose.ui.platform.LocalContext.current
     val repConfig = serverGroup.workspaces.firstOrNull()
     val serverNodeId = serverGroup.serverNodeId.takeIf { it > 0L } ?: repConfig?.serverNodeId ?: 0L
 
@@ -58,26 +64,35 @@ fun EditServerDialog(
     var privateKey by remember(serverGroup.key) { mutableStateOf("") }
     var showErrors by remember { mutableStateOf(false) }
 
-    val parsedPort = port.toIntOrNull()
+    val isLocalMode = authType == AUTH_TYPE_LOCAL || repConfig?.isLocalSession == true
+    val parsedPort = if (isLocalMode) 0 else port.toIntOrNull()
     val hasSavedPassword = !repConfig?.encryptedPassword.isNullOrBlank()
     val hasSavedPrivateKey = !repConfig?.encryptedPrivateKey.isNullOrBlank()
-    val passwordMissing = sshPasswordCredentialMissing(authType, password, hasSavedPassword)
-    val privateKeyMissing = sshPrivateKeyCredentialMissing(authType, privateKey, hasSavedPrivateKey)
+    val passwordMissing = if (isLocalMode) false else sshPasswordCredentialMissing(authType, password, hasSavedPassword)
+    val privateKeyMissing = if (isLocalMode) false else sshPrivateKeyCredentialMissing(authType, privateKey, hasSavedPrivateKey)
 
-    val hostError = showErrors && host.isBlank()
-    val portError = showErrors && (parsedPort == null || parsedPort !in 1..65535)
-    val usernameError = showErrors && username.isBlank()
-    val passwordError = showErrors && passwordMissing
-    val privateKeyError = showErrors && privateKeyMissing
-    val canSave = host.isNotBlank() && username.isNotBlank() && parsedPort in 1..65535 &&
-        !passwordMissing && !privateKeyMissing
+    val hostError = showErrors && !isLocalMode && host.isBlank()
+    val portError = showErrors && !isLocalMode && (parsedPort == null || parsedPort !in 1..65535)
+    val usernameError = showErrors && !isLocalMode && username.isBlank()
+    val passwordError = showErrors && !isLocalMode && passwordMissing
+    val privateKeyError = showErrors && !isLocalMode && privateKeyMissing
+    val canSave = if (isLocalMode) {
+        host.isNotBlank() || displayName.isNotBlank()
+    } else {
+        host.isNotBlank() && username.isNotBlank() && (parsedPort ?: 0) in 1..65535 &&
+            !passwordMissing && !privateKeyMissing
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Column {
                 Text(
-                    text = language.text("编辑服务器配置", "Edit Server Configuration"),
+                    text = if (isLocalMode) {
+                        language.text("编辑本地终端配置", "Edit Local Terminal Configuration")
+                    } else {
+                        language.text("编辑服务器配置", "Edit Server Configuration")
+                    },
                     style = MaterialTheme.typography.titleLarge
                 )
                 Text(
@@ -101,46 +116,82 @@ fun EditServerDialog(
                 OutlinedTextField(
                     value = displayName,
                     onValueChange = { displayName = it },
-                    label = { Text(language.text("服务器备注 / 名称", "Server remark / name")) },
-                    placeholder = { Text(language.text("例如：生产环境、测试节点", "e.g. Production, Test Node")) },
+                    label = { Text(if (isLocalMode) language.text("设备备注 / 名称", "Device remark / name") else language.text("服务器备注 / 名称", "Server remark / name")) },
+                    placeholder = { Text(if (isLocalMode) language.text("例如：本机、Termux 环境", "e.g. Local device, Termux") else language.text("例如：生产环境、测试节点", "e.g. Production, Test Node")) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
+                if (isLocalMode) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilterChip(
+                            selected = host == LocalEnvironmentDetector.SYSTEM_SH || host.isBlank(),
+                            onClick = { host = LocalEnvironmentDetector.SYSTEM_SH },
+                            label = { Text("System Sh (/system/bin/sh)") }
+                        )
+                        val termuxAvailable = LocalEnvironmentDetector.isTermuxInstalled()
+                        if (termuxAvailable) {
+                            FilterChip(
+                                selected = host == LocalEnvironmentDetector.TERMUX_BASH,
+                                onClick = { host = LocalEnvironmentDetector.TERMUX_BASH },
+                                label = { Text("Termux Bash") }
+                            )
+                        }
+                        if (LocalEnvironmentDetector.isBuiltinBusyboxAvailable(context)) {
+                            FilterChip(
+                                selected = host == LocalEnvironmentDetector.BUILTIN_SHELL,
+                                onClick = { host = LocalEnvironmentDetector.BUILTIN_SHELL },
+                                label = { Text(language.text("内置 Linux", "Built-in Linux")) }
+                            )
+                        }
+                    }
+
                     OutlinedTextField(
                         value = host,
                         onValueChange = { host = it.trim() },
-                        label = { Text(language.text("主机 / IP", "Host / IP")) },
-                        isError = hostError,
-                        supportingText = { if (hostError) Text(language.text("请输入主机地址", "Host is required")) },
+                        label = { Text(language.text("Shell 程序路径", "Shell Path")) },
+                        placeholder = { Text("/system/bin/sh") },
                         singleLine = true,
-                        modifier = Modifier.weight(2f)
+                        modifier = Modifier.fillMaxWidth()
                     )
-                    OutlinedTextField(
-                        value = port,
-                        onValueChange = { port = it.filter(Char::isDigit).take(5) },
-                        label = { Text(language.text("端口", "Port")) },
-                        isError = portError,
-                        supportingText = { if (portError) Text("1-65535") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = host,
+                            onValueChange = { host = it.trim() },
+                            label = { Text(language.text("主机 / IP", "Host / IP")) },
+                            isError = hostError,
+                            supportingText = { if (hostError) Text(language.text("请输入主机地址", "Host is required")) },
+                            singleLine = true,
+                            modifier = Modifier.weight(2f)
+                        )
+                        OutlinedTextField(
+                            value = port,
+                            onValueChange = { port = it.filter(Char::isDigit).take(5) },
+                            label = { Text(language.text("端口", "Port")) },
+                            isError = portError,
+                            supportingText = { if (portError) Text("1-65535") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
 
-                OutlinedTextField(
-                    value = username,
-                    onValueChange = { username = it.trim() },
-                    label = { Text(language.text("用户名", "Username")) },
-                    isError = usernameError,
-                    supportingText = { if (usernameError) Text(language.text("请输入用户名", "Username is required")) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                    OutlinedTextField(
+                        value = username,
+                        onValueChange = { username = it.trim() },
+                        label = { Text(language.text("用户名", "Username")) },
+                        isError = usernameError,
+                        supportingText = { if (usernameError) Text(language.text("请输入用户名", "Username is required")) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -236,20 +287,21 @@ fun EditServerDialog(
                         }
                     )
                 }
+                }
             }
         },
         confirmButton = {
             FeedbackButton(
                 onClick = {
                     showErrors = true
-                    if (canSave && parsedPort != null) {
+                    if (canSave) {
                         onSave(
                             serverNodeId,
-                            displayName.trim(),
-                            host.trim(),
-                            parsedPort,
-                            username.trim(),
-                            authType,
+                            displayName.trim().ifBlank { if (isLocalMode) "本机" else "" },
+                            if (isLocalMode) host.trim().ifBlank { LocalEnvironmentDetector.BUILTIN_SHELL } else host.trim(),
+                            if (isLocalMode) 0 else (parsedPort ?: 22),
+                            if (isLocalMode) "local" else username.trim(),
+                            if (isLocalMode) AUTH_TYPE_LOCAL else authType,
                             password,
                             privateKey
                         )

@@ -134,6 +134,51 @@ fun SettingsScreen(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                val context = androidx.compose.ui.platform.LocalContext.current
+                val powerManager = remember { context.getSystemService(android.content.Context.POWER_SERVICE) as? android.os.PowerManager }
+                val isBatteryIgnored = remember(context) { powerManager?.isIgnoringBatteryOptimizations(context.packageName) == true }
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = language.text("后台运行保活 (Termux 机制)", "Background Execution (Termux)"),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    Text(
+                        text = if (isBatteryIgnored) {
+                            language.text("已豁免电池优化，CPU/Wi-Fi 唤醒保活已生效，锁屏不断连。", "Battery optimization ignored. Persistent background execution active.")
+                        } else {
+                            language.text("建议开启以允许后台长期连接，防止系统在锁屏或切换应用时杀死进程。", "Recommended to prevent Android from killing connections in background.")
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (isBatteryIgnored) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(16.dp))
+                if (!isBatteryIgnored) {
+                    FeedbackButton(onClick = {
+                        try {
+                            val intent = android.content.Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                                data = android.net.Uri.parse("package:${context.packageName}")
+                            }
+                            context.startActivity(intent)
+                        } catch (_: Exception) {
+                            try {
+                                val intent = android.content.Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                                context.startActivity(intent)
+                            } catch (_: Exception) {}
+                        }
+                    }) {
+                        Text(language.text("开启保活", "Allow"))
+                    }
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = language.text("下载目录", "Download directory"),

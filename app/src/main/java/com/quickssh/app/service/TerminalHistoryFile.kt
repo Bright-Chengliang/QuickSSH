@@ -23,8 +23,9 @@ class TerminalHistoryFile(
     private val sessionId: String
 ) {
     companion object {
-        private const val DIR_NAME = "terminal-history"
-        private const val MAX_FILE_SIZE_BYTES = 64L * 1024 * 1024 // 64 MB cap
+        private const val DIR_NAME = "terminal_history"
+        const val MAX_FILE_SIZE_BYTES = 5L * 1024 * 1024 // 5 MB per session cap
+        const val MAX_TOTAL_HISTORY_BYTES = 50L * 1024 * 1024 // 50 MB total limit
         private const val PAGE_SIZE_LINES = 200
 
         fun historyDirectory(context: Context): File {
@@ -38,6 +39,27 @@ class TerminalHistoryFile(
                 val name = file.nameWithoutExtension
                 if (name !in keepSessionIds) {
                     file.delete()
+                }
+            }
+        }
+
+        /**
+         * Enforces maximum total history directory size by deleting oldest log files (FIFO).
+         */
+        fun pruneHistoryToTotalLimit(context: Context, maxTotalBytes: Long = MAX_TOTAL_HISTORY_BYTES) {
+            val dir = historyDirectory(context)
+            if (!dir.isDirectory) return
+            val files = dir.listFiles()?.filter { it.isFile } ?: return
+            var currentTotal = files.sumOf { it.length() }
+            if (currentTotal <= maxTotalBytes) return
+
+            // Sort oldest first (FIFO)
+            val sorted = files.sortedBy { it.lastModified() }
+            for (f in sorted) {
+                val size = f.length()
+                if (f.delete()) {
+                    currentTotal -= size
+                    if (currentTotal <= maxTotalBytes) break
                 }
             }
         }
@@ -69,7 +91,10 @@ class TerminalHistoryFile(
             if (closed) return
             if (file.length() > MAX_FILE_SIZE_BYTES) return
             try {
-                val w = writer ?: BufferedWriter(FileWriter(file, true)).also { writer = it }
+                val w = writer ?: run {
+                    pruneHistoryToTotalLimit(context)
+                    BufferedWriter(FileWriter(file, true)).also { writer = it }
+                }
                 for (line in lines) {
                     w.write(line)
                     w.newLine()

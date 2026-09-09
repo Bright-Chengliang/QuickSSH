@@ -10,9 +10,11 @@ import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkRequest
+import android.net.wifi.WifiManager
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import com.quickssh.app.MainActivity
 import com.quickssh.app.data.AppDatabase
@@ -45,15 +47,51 @@ data class SshSessionInfo(
 class SshForegroundService : Service() {
 
     private val binder = LocalBinder()
-    private val sshHelpers = mutableMapOf<String, SshClientHelper>()
+    private val sessionClients = mutableMapOf<String, TerminalSessionClient>()
     private val sessionInfosById = linkedMapOf<String, SshSessionInfo>()
     private val _sessionInfos = MutableStateFlow<List<SshSessionInfo>>(emptyList())
     val sessionInfos: StateFlow<List<SshSessionInfo>> = _sessionInfos.asStateFlow()
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var connectivityManager: ConnectivityManager? = null
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
+
+    private fun acquireLocks() {
+        try {
+            if (wakeLock == null) {
+                val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
+                wakeLock = powerManager?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "quickssh:session_wake_lock")?.apply {
+                    setReferenceCounted(false)
+                    acquire()
+                }
+            }
+        } catch (_: Exception) {}
+        try {
+            if (wifiLock == null) {
+                val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+                @Suppress("DEPRECATION")
+                wifiLock = wifiManager?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "quickssh:session_wifi_lock")?.apply {
+                    setReferenceCounted(false)
+                    acquire()
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun releaseLocks() {
+        try {
+            wakeLock?.let { if (it.isHeld) it.release() }
+            wakeLock = null
+        } catch (_: Exception) {}
+        try {
+            wifiLock?.let { if (it.isHeld) it.release() }
+            wifiLock = null
+        } catch (_: Exception) {}
+    }
+
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
-            sshHelpers.values.forEach { it.reconnectWhenNetworkAvailable() }
+            sessionClients.values.forEach { it.reconnectWhenNetworkAvailable() }
         }
     }
 
@@ -118,7 +156,7 @@ class SshForegroundService : Service() {
         val existingSession = sessionInfosById[sessionId]
         if (
             existingSession?.configId == config.id &&
-            sshHelpers[sessionId] != null &&
+            sessionClients[sessionId] != null &&
             sshSessionCanBeReused(existingSession.status)
         ) {
             publishSessions()
@@ -126,16 +164,21 @@ class SshForegroundService : Service() {
             return
         }
 
-        sshHelpers[sessionId]?.disconnect()
-        val helper = SshClientHelper(config, applicationContext)
-        sshHelpers[sessionId] = helper
+        sessionClients[sessionId]?.disconnect()
+        val isLocal = config.isLocalSession || config.authType == AUTH_TYPE_LOCAL
+        val client: TerminalSessionClient = if (isLocal) {
+            LocalPtyHelper(sessionId, config, applicationContext)
+        } else {
+            SshClientHelper(config = config, appContext = applicationContext, sessionId = sessionId)
+        }
+        sessionClients[sessionId] = client
         sessionInfosById[sessionId] = SshSessionInfo(
             sessionId = sessionId,
             configId = config.id,
             name = config.name,
-            host = config.host,
-            port = config.port,
-            username = config.username,
+            host = if (isLocal) "localhost" else config.host,
+            port = if (isLocal) 0 else config.port,
+            username = if (isLocal) "local" else config.username,
             workDirectory = config.workDirectory,
             terminalFontSizeSp = config.terminalFontSizeSp,
             terminalWrapEnabled = config.terminalWrapEnabled,
@@ -143,28 +186,33 @@ class SshForegroundService : Service() {
             terminalShortcuts = config.terminalShortcuts,
             startedAt = System.currentTimeMillis(),
             status = SshSessionStatus.CONNECTING,
-            statusMessage = "Connecting"
+            statusMessage = if (isLocal) "Starting local terminal..." else "Connecting"
         )
-        observeSessionStatus(sessionId, helper)
+        acquireLocks()
+        observeSessionStatus(sessionId, client)
         publishSessions()
-        helper.connect()
+        client.connect()
 
         // Keep the foreground notification alive while SSH sessions are active.
         val notification = createNotification()
         startForeground(NOTIFICATION_ID, notification)
     }
 
-    fun getSshHelper(sessionId: String): SshClientHelper? {
-        return sshHelpers[sessionId]
+    fun getSshHelper(sessionId: String): TerminalSessionClient? {
+        return sessionClients[sessionId]
+    }
+
+    fun getSessionClient(sessionId: String): TerminalSessionClient? {
+        return sessionClients[sessionId]
     }
 
     fun findReusableSessionForConfig(configId: Long): SshSessionInfo? {
         return reusableSshSessionForConfig(configId, _sessionInfos.value)
     }
 
-    private fun observeSessionStatus(sessionId: String, helper: SshClientHelper) {
+    private fun observeSessionStatus(sessionId: String, client: TerminalSessionClient) {
         serviceScope.launch {
-            helper.status.collect { status ->
+            client.status.collect { status ->
                 val current = sessionInfosById[sessionId] ?: return@collect
                 sessionInfosById[sessionId] = current.copy(status = status)
                 publishSessions()
@@ -172,7 +220,7 @@ class SshForegroundService : Service() {
             }
         }
         serviceScope.launch {
-            helper.statusMessage.collect { message ->
+            client.statusMessage.collect { message ->
                 val current = sessionInfosById[sessionId] ?: return@collect
                 sessionInfosById[sessionId] = current.copy(statusMessage = message)
                 publishSessions()
@@ -180,7 +228,7 @@ class SshForegroundService : Service() {
         }
     }
     fun reconnectSession(sessionId: String) {
-        sshHelpers[sessionId]?.reconnectNow()
+        sessionClients[sessionId]?.reconnectNow()
     }
 
     fun renameSession(sessionId: String, name: String) {
@@ -192,10 +240,11 @@ class SshForegroundService : Service() {
     }
 
     private fun stopSshSession(sessionId: String) {
-        sshHelpers.remove(sessionId)?.disconnect()
+        sessionClients.remove(sessionId)?.disconnect()
         sessionInfosById.remove(sessionId)
         publishSessions()
-        if (sshHelpers.isEmpty()) {
+        if (sessionClients.isEmpty()) {
+            releaseLocks()
             stopForegroundCompat(removeNotification = true)
             stopSelf()
         } else {
@@ -204,8 +253,9 @@ class SshForegroundService : Service() {
     }
 
     private fun stopAllSshSessions() {
-        sshHelpers.values.forEach { it.disconnect() }
-        sshHelpers.clear()
+        releaseLocks()
+        sessionClients.values.forEach { it.disconnect() }
+        sessionClients.clear()
         sessionInfosById.clear()
         publishSessions()
         stopForegroundCompat(removeNotification = true)
@@ -224,9 +274,10 @@ class SshForegroundService : Service() {
     }
 
     override fun onDestroy() {
+        releaseLocks()
         runCatching { connectivityManager?.unregisterNetworkCallback(networkCallback) }
-        sshHelpers.values.forEach { it.disconnect() }
-        sshHelpers.clear()
+        sessionClients.values.forEach { it.disconnect() }
+        sessionClients.clear()
         sessionInfosById.clear()
         publishSessions()
         super.onDestroy()
@@ -257,6 +308,8 @@ class SshForegroundService : Service() {
             .setContentIntent(pendingIntent)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Disconnect all", stopPendingIntent)
             .setOngoing(sessions.isNotEmpty())
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
 
         sshNotificationDisconnectTarget(sessions)?.let { currentSession ->
             val stopCurrentIntent = Intent(this, SshForegroundService::class.java).apply {

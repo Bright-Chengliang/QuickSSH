@@ -28,6 +28,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -37,8 +38,10 @@ import com.quickssh.app.data.PERSISTENT_SESSION_NONE
 import com.quickssh.app.data.PERSISTENT_SESSION_SCREEN
 import com.quickssh.app.data.PERSISTENT_SESSION_TMUX
 import com.quickssh.app.data.SshConfig
+import com.quickssh.app.service.AUTH_TYPE_LOCAL
 import com.quickssh.app.service.AUTH_TYPE_PASSWORD
 import com.quickssh.app.service.AUTH_TYPE_PRIVATE_KEY
+import com.quickssh.app.service.LocalEnvironmentDetector
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -56,6 +59,7 @@ fun SshAddScreen(
     val isEditing = configToEdit != null && !isCopyMode
     val isWorkspaceCopy = configToEdit != null && isCopyMode && configToEdit.id == 0L
     val lockedServerFields = isWorkspaceCopy
+    val context = LocalContext.current
     val lockedFieldColors = OutlinedTextFieldDefaults.colors(
         disabledTextColor = MaterialTheme.colorScheme.onSurface,
         disabledLabelColor = MaterialTheme.colorScheme.outline,
@@ -109,24 +113,30 @@ fun SshAddScreen(
     }
     var showErrors by remember { mutableStateOf(false) }
 
-    val parsedPort = port.toIntOrNull()
+    val isLocalMode = authType == AUTH_TYPE_LOCAL || configToEdit?.isLocalSession == true
+    val parsedPort = if (isLocalMode) 0 else port.toIntOrNull()
     val parsedTerminalFontSize = terminalFontSize.toIntOrNull()
     val hasSavedPassword = !configToEdit?.encryptedPassword.isNullOrBlank()
     val hasSavedPrivateKey = !configToEdit?.encryptedPrivateKey.isNullOrBlank()
-    val passwordMissing = sshPasswordCredentialMissing(authType, password, hasSavedPassword)
-    val privateKeyMissing = sshPrivateKeyCredentialMissing(authType, privateKey, hasSavedPrivateKey)
+    val passwordMissing = if (isLocalMode) false else sshPasswordCredentialMissing(authType, password, hasSavedPassword)
+    val privateKeyMissing = if (isLocalMode) false else sshPrivateKeyCredentialMissing(authType, privateKey, hasSavedPrivateKey)
     val nameError = showErrors && name.isBlank()
-    val hostError = showErrors && host.isBlank()
-    val portError = showErrors && (parsedPort == null || parsedPort !in 1..65535)
+    val hostError = showErrors && !isLocalMode && host.isBlank()
+    val portError = showErrors && !isLocalMode && (parsedPort == null || parsedPort !in 1..65535)
     val terminalFontSizeError = showErrors && (parsedTerminalFontSize == null || parsedTerminalFontSize !in 10..20)
     val terminalTermError = showErrors && terminalTerm.trim().isBlank()
-    val usernameError = showErrors && username.isBlank()
-    val passwordError = showErrors && passwordMissing
-    val privateKeyError = showErrors && privateKeyMissing
-    val canSave = !nameError && !hostError && !portError && !usernameError && !passwordError && !privateKeyError && !terminalFontSizeError && !terminalTermError &&
-        name.isNotBlank() && host.isNotBlank() && username.isNotBlank() && parsedPort in 1..65535 &&
-        parsedTerminalFontSize in 10..20 && terminalTerm.trim().isNotBlank() &&
-        !passwordMissing && !privateKeyMissing
+    val usernameError = showErrors && !isLocalMode && username.isBlank()
+    val passwordError = showErrors && !isLocalMode && passwordMissing
+    val privateKeyError = showErrors && !isLocalMode && privateKeyMissing
+    val canSave = if (isLocalMode) {
+        !nameError && !terminalFontSizeError && !terminalTermError &&
+            name.isNotBlank() && parsedTerminalFontSize in 10..20 && terminalTerm.trim().isNotBlank()
+    } else {
+        !nameError && !hostError && !portError && !usernameError && !passwordError && !privateKeyError && !terminalFontSizeError && !terminalTermError &&
+            name.isNotBlank() && host.isNotBlank() && username.isNotBlank() && (parsedPort ?: 0) in 1..65535 &&
+            (parsedTerminalFontSize ?: 0) in 10..20 && terminalTerm.trim().isNotBlank() &&
+            !passwordMissing && !privateKeyMissing
+    }
 
     Scaffold(
         topBar = {
@@ -134,10 +144,16 @@ fun SshAddScreen(
                 title = when {
                     isWorkspaceCopy -> language.text("添加工作区", "Add Workspace")
                     isCopyMode -> language.text("复制工作区", "Copy Workspace")
+                    isEditing && isLocalMode -> language.text("编辑本地终端", "Edit Local Terminal")
                     isEditing -> language.text("编辑 SSH 服务器", "Edit SSH Server")
+                    isLocalMode -> language.text("添加本地终端", "Add Local Terminal")
                     else -> language.text("添加 SSH 服务器", "Add SSH Server")
                 },
-                subtitle = language.text("连接、凭据与终端默认设置", "Connection, credentials and terminal defaults"),
+                subtitle = if (isLocalMode) {
+                    language.text("本地 Shell、工作区与终端默认设置", "Local Shell, workspace and terminal defaults")
+                } else {
+                    language.text("连接、凭据与终端默认设置", "Connection, credentials and terminal defaults")
+                },
                 navigationIcon = {
                     FeedbackIconButton(
                         imageVector = Icons.Default.ArrowBack,
@@ -157,18 +173,68 @@ fun SshAddScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            if (!isEditing && !isWorkspaceCopy) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = !isLocalMode,
+                        onClick = {
+                            authType = AUTH_TYPE_PASSWORD
+                            if (serverDisplayName == "本机") serverDisplayName = ""
+                            if (name == "本地 Shell") name = ""
+                            host = ""
+                            port = "22"
+                            username = "root"
+                        },
+                        label = { Text(language.text("远程 SSH 服务器", "Remote SSH Server")) }
+                    )
+                    FilterChip(
+                        selected = isLocalMode,
+                        onClick = {
+                            authType = AUTH_TYPE_LOCAL
+                            if (serverDisplayName.isBlank()) serverDisplayName = "本机"
+                            if (name.isBlank()) name = "本地 Shell"
+                            host = if (LocalEnvironmentDetector.isTermuxInstalled()) {
+                                LocalEnvironmentDetector.TERMUX_BASH
+                            } else {
+                                LocalEnvironmentDetector.SYSTEM_SH
+                            }
+                            port = "0"
+                            username = "local"
+                            if (workDirectory.isBlank()) {
+                                workDirectory = if (LocalEnvironmentDetector.isTermuxInstalled()) {
+                                    LocalEnvironmentDetector.TERMUX_HOME
+                                } else {
+                                    ""
+                                }
+                            }
+                        },
+                        label = { Text(language.text("本地终端", "Local Terminal")) }
+                    )
+                }
+            }
+
             if (!lockedServerFields) {
                 OutlinedTextField(
                     value = serverDisplayName,
                     onValueChange = { serverDisplayName = it },
-                    label = { Text(language.text("服务器备注 / 名称", "Server remark / name")) },
-                    placeholder = { Text(language.text("例如：生产服务器、开发测试机", "e.g. Production server, Test box")) },
+                    label = { Text(if (isLocalMode) language.text("设备备注 / 名称", "Device remark / name") else language.text("服务器备注 / 名称", "Server remark / name")) },
+                    placeholder = { Text(if (isLocalMode) language.text("例如：本机、Termux 环境", "e.g. Local device, Termux") else language.text("例如：生产服务器、开发测试机", "e.g. Production server, Test box")) },
                     supportingText = {
                         Text(
-                            language.text(
-                                "对此服务器卡片生效，留空时默认显示 用户名@主机:端口",
-                                "Applies to this server card, defaults to user@host:port"
-                            )
+                            if (isLocalMode) {
+                                language.text(
+                                    "对此设备卡片生效，留空时默认显示 本机",
+                                    "Applies to this device card, defaults to Local Device"
+                                )
+                            } else {
+                                language.text(
+                                    "对此服务器卡片生效，留空时默认显示 用户名@主机:端口",
+                                    "Applies to this server card, defaults to user@host:port"
+                                )
+                            }
                         )
                     },
                     modifier = Modifier.fillMaxWidth(),
@@ -180,7 +246,7 @@ fun SshAddScreen(
                 value = name,
                 onValueChange = { name = it },
                 label = { Text(language.text("工作区标签 / 名称", "Workspace label")) },
-                placeholder = { Text(language.text("例如：默认工作区、发布部署", "e.g. Default workspace, Production deploy")) },
+                placeholder = { Text(if (isLocalMode) language.text("例如：本地 Shell、数据分析", "e.g. Local Shell, Data analysis") else language.text("例如：默认工作区、发布部署", "e.g. Default workspace, Production deploy")) },
                 isError = nameError,
                 supportingText = { if (nameError) Text(language.text("工作区标签不能为空", "Workspace label is required")) },
                 modifier = Modifier.fillMaxWidth(),
@@ -189,111 +255,163 @@ fun SshAddScreen(
 
             if (isEditing && !lockedServerFields) {
                 Text(
-                    text = language.text(
-                        "服务器连接配置（修改将同步应用到此卡片下所有工作区）",
-                        "Server credentials (changes sync to all workspaces in this card)"
-                    ),
+                    text = if (isLocalMode) {
+                        language.text("本地终端环境（修改将同步应用到此卡片下所有工作区）", "Local environment (changes sync to all workspaces in this card)")
+                    } else {
+                        language.text(
+                            "服务器连接配置（修改将同步应用到此卡片下所有工作区）",
+                            "Server credentials (changes sync to all workspaces in this card)"
+                        )
+                    },
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.primary
                 )
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
+            if (isLocalMode) {
+                Text(
+                    text = language.text("本地 Shell 选择与配置", "Shell Selection & Path"),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = host == LocalEnvironmentDetector.SYSTEM_SH || host.isBlank(),
+                        onClick = { host = LocalEnvironmentDetector.SYSTEM_SH },
+                        label = { Text("System Sh (/system/bin/sh)") }
+                    )
+                    val termuxAvailable = LocalEnvironmentDetector.isTermuxInstalled()
+                    if (termuxAvailable) {
+                        FilterChip(
+                            selected = host == LocalEnvironmentDetector.TERMUX_BASH,
+                            onClick = {
+                                host = LocalEnvironmentDetector.TERMUX_BASH
+                                if (workDirectory.isBlank()) {
+                                    workDirectory = LocalEnvironmentDetector.TERMUX_HOME
+                                }
+                            },
+                            label = { Text("Termux Bash") }
+                        )
+                    }
+                    if (LocalEnvironmentDetector.isBuiltinBusyboxAvailable(context)) {
+                        FilterChip(
+                            selected = host == LocalEnvironmentDetector.BUILTIN_SHELL,
+                            onClick = { host = LocalEnvironmentDetector.BUILTIN_SHELL },
+                            label = { Text(language.text("内置 Linux (BusyBox)", "Built-in Linux (BusyBox)")) }
+                        )
+                    }
+                }
+
                 OutlinedTextField(
                     value = host,
-                    onValueChange = { if (!lockedServerFields) host = it.trim() },
-                    label = { Text("Host") },
-                    isError = hostError,
-                    supportingText = { if (hostError) Text("Host is required") },
-                    modifier = Modifier.weight(2f),
-                    enabled = !lockedServerFields,
-                    colors = lockedFieldColors,
-                    singleLine = true
+                    onValueChange = { host = it.trim() },
+                    label = { Text(language.text("Shell 程序绝对路径", "Shell Executable Path")) },
+                    placeholder = { Text("/system/bin/sh") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
                 )
-                OutlinedTextField(
-                    value = port,
-                    onValueChange = { if (!lockedServerFields) port = it.filter(Char::isDigit).take(5) },
-                    label = { Text("Port") },
-                    isError = portError,
-                    supportingText = { if (portError) Text("1-65535") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.weight(1f),
-                    enabled = !lockedServerFields,
-                    colors = lockedFieldColors,
-                    singleLine = true
-                )
-            }
-
-            OutlinedTextField(
-                value = username,
-                onValueChange = { if (!lockedServerFields) username = it.trim() },
-                label = { Text("Username") },
-                isError = usernameError,
-                supportingText = { if (usernameError) Text("Username is required") },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = !lockedServerFields,
-                colors = lockedFieldColors,
-                singleLine = true
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                FeedbackButton(
-                    onClick = { authType = AUTH_TYPE_PASSWORD },
-                    modifier = Modifier.weight(1f),
-                    enabled = !lockedServerFields && authType != AUTH_TYPE_PASSWORD,
-                    colors = ButtonDefaults.buttonColors(disabledContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.72f), disabledContentColor = MaterialTheme.colorScheme.onPrimary)
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Text("Password")
+                    OutlinedTextField(
+                        value = host,
+                        onValueChange = { if (!lockedServerFields) host = it.trim() },
+                        label = { Text("Host") },
+                        isError = hostError,
+                        supportingText = { if (hostError) Text("Host is required") },
+                        modifier = Modifier.weight(2f),
+                        enabled = !lockedServerFields,
+                        colors = lockedFieldColors,
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = port,
+                        onValueChange = { if (!lockedServerFields) port = it.filter(Char::isDigit).take(5) },
+                        label = { Text("Port") },
+                        isError = portError,
+                        supportingText = { if (portError) Text("1-65535") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(1f),
+                        enabled = !lockedServerFields,
+                        colors = lockedFieldColors,
+                        singleLine = true
+                    )
                 }
-                FeedbackOutlinedButton(
-                    onClick = { authType = AUTH_TYPE_PRIVATE_KEY },
-                    modifier = Modifier.weight(1f),
-                    enabled = !lockedServerFields && authType != AUTH_TYPE_PRIVATE_KEY
-                ) {
-                    Text("Private key")
-                }
-            }
 
-            if (authType == AUTH_TYPE_PASSWORD) {
                 OutlinedTextField(
-                    value = password,
-                    onValueChange = { password = it },
-                    label = {
-                        Text(
-                            when {
-                                isCopyMode -> "Password (blank keeps original)"
-                                isEditing -> "Password (blank keeps saved password)"
-                                else -> "Password"
-                            }
-                        )
-                    },
-                    isError = passwordError,
-                    supportingText = { if (passwordError) Text("Password is required for password authentication") },
-                    visualTransformation = PasswordVisualTransformation(),
+                    value = username,
+                    onValueChange = { if (!lockedServerFields) username = it.trim() },
+                    label = { Text("Username") },
+                    isError = usernameError,
+                    supportingText = { if (usernameError) Text("Username is required") },
                     modifier = Modifier.fillMaxWidth(),
                     enabled = !lockedServerFields,
                     colors = lockedFieldColors,
                     singleLine = true
                 )
-            } else {
-                OutlinedTextField(
-                    value = privateKey,
-                    onValueChange = { privateKey = it },
-                    label = { Text(if (isEditing || isCopyMode) "Private key (blank keeps saved key)" else "Private key") },
-                    placeholder = { Text("Paste OpenSSH private key") },
-                    isError = privateKeyError,
-                    supportingText = { if (privateKeyError) Text("Private key is required for key authentication") },
-                    minLines = 4,
-                    enabled = !lockedServerFields,
-                    colors = lockedFieldColors,
-                    modifier = Modifier.fillMaxWidth()
-                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FeedbackButton(
+                        onClick = { authType = AUTH_TYPE_PASSWORD },
+                        modifier = Modifier.weight(1f),
+                        enabled = !lockedServerFields && authType != AUTH_TYPE_PASSWORD,
+                        colors = ButtonDefaults.buttonColors(disabledContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.72f), disabledContentColor = MaterialTheme.colorScheme.onPrimary)
+                    ) {
+                        Text("Password")
+                    }
+                    FeedbackOutlinedButton(
+                        onClick = { authType = AUTH_TYPE_PRIVATE_KEY },
+                        modifier = Modifier.weight(1f),
+                        enabled = !lockedServerFields && authType != AUTH_TYPE_PRIVATE_KEY
+                    ) {
+                        Text("Private key")
+                    }
+                }
+
+                if (authType == AUTH_TYPE_PASSWORD) {
+                    OutlinedTextField(
+                        value = password,
+                        onValueChange = { password = it },
+                        label = {
+                            Text(
+                                when {
+                                    isCopyMode -> "Password (blank keeps original)"
+                                    isEditing -> "Password (blank keeps saved password)"
+                                    else -> "Password"
+                                }
+                            )
+                        },
+                        isError = passwordError,
+                        supportingText = { if (passwordError) Text("Password is required for password authentication") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !lockedServerFields,
+                        colors = lockedFieldColors,
+                        singleLine = true
+                    )
+                } else {
+                    OutlinedTextField(
+                        value = privateKey,
+                        onValueChange = { privateKey = it },
+                        label = { Text(if (isEditing || isCopyMode) "Private key (blank keeps saved key)" else "Private key") },
+                        placeholder = { Text("Paste OpenSSH private key") },
+                        isError = privateKeyError,
+                        supportingText = { if (privateKeyError) Text("Private key is required for key authentication") },
+                        minLines = 4,
+                        enabled = !lockedServerFields,
+                        colors = lockedFieldColors,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             }
 
             OutlinedTextField(
@@ -371,91 +489,93 @@ fun SshAddScreen(
                 modifier = Modifier.fillMaxWidth()
             )
 
-            Text(
-                language.text("持久会话（防断线）", "Persistent session (anti-disconnect)"),
-                style = MaterialTheme.typography.titleSmall
-            )
-            Text(
-                language.text(
-                    "开启后，远端命令在 tmux/screen 中运行，SSH 断开后不会中断。仅限 Linux/macOS 远程。",
-                    "When enabled, remote commands run inside tmux/screen and survive SSH disconnections. Linux/macOS remote only."
-                ),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.outline
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                FilterChip(
-                    selected = persistentSessionMode == PERSISTENT_SESSION_NONE,
-                    onClick = { persistentSessionMode = PERSISTENT_SESSION_NONE },
-                    label = { Text(language.text("关闭", "Off")) }
-                )
-                FilterChip(
-                    selected = persistentSessionMode == PERSISTENT_SESSION_AUTO,
-                    onClick = { persistentSessionMode = PERSISTENT_SESSION_AUTO },
-                    label = { Text(language.text("自动", "Auto")) }
-                )
-                FilterChip(
-                    selected = persistentSessionMode == PERSISTENT_SESSION_TMUX,
-                    onClick = { persistentSessionMode = PERSISTENT_SESSION_TMUX },
-                    label = { Text("tmux") }
-                )
-                FilterChip(
-                    selected = persistentSessionMode == PERSISTENT_SESSION_SCREEN,
-                    onClick = { persistentSessionMode = PERSISTENT_SESSION_SCREEN },
-                    label = { Text("screen") }
-                )
-            }
-
-            FeedbackOutlinedButton(
-                onClick = {
-                    showErrors = true
-                    if (canSave && parsedPort != null) {
-                        onTestConnectionClicked(
-                            name.trim(),
-                            host.trim(),
-                            parsedPort,
-                            username.trim(),
-                            authType,
-                            password,
-                            privateKey,
-                            workDirectory.trim(),
-                            postConnectCommand.trim(),
-                            parsedTerminalFontSize ?: 12,
-                            terminalWrapChoice,
-                            terminalTerm.trim(),
-                            terminalShortcuts.trim(),
-                            persistentSessionMode
-                        )
-                    }
-                },
-                enabled = canSave && !isTestingConnection,
-                modifier = Modifier.fillMaxWidth(),
-                shape = MaterialTheme.shapes.medium
-            ) {
-                Text(if (isTestingConnection) "Testing connection..." else "Test Connection")
-            }
-
-            if (connectionTestStatus.isNotBlank()) {
+            if (!isLocalMode) {
                 Text(
-                    text = connectionTestStatus,
+                    language.text("持久会话（防断线）", "Persistent session (anti-disconnect)"),
+                    style = MaterialTheme.typography.titleSmall
+                )
+                Text(
+                    language.text(
+                        "开启后，远端命令在 tmux/screen 中运行，SSH 断开后不会中断。仅限 Linux/macOS 远程。",
+                        "When enabled, remote commands run inside tmux/screen and survive SSH disconnections. Linux/macOS remote only."
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.outline
                 )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = persistentSessionMode == PERSISTENT_SESSION_NONE,
+                        onClick = { persistentSessionMode = PERSISTENT_SESSION_NONE },
+                        label = { Text(language.text("关闭", "Off")) }
+                    )
+                    FilterChip(
+                        selected = persistentSessionMode == PERSISTENT_SESSION_AUTO,
+                        onClick = { persistentSessionMode = PERSISTENT_SESSION_AUTO },
+                        label = { Text(language.text("自动", "Auto")) }
+                    )
+                    FilterChip(
+                        selected = persistentSessionMode == PERSISTENT_SESSION_TMUX,
+                        onClick = { persistentSessionMode = PERSISTENT_SESSION_TMUX },
+                        label = { Text("tmux") }
+                    )
+                    FilterChip(
+                        selected = persistentSessionMode == PERSISTENT_SESSION_SCREEN,
+                        onClick = { persistentSessionMode = PERSISTENT_SESSION_SCREEN },
+                        label = { Text("screen") }
+                    )
+                }
+
+                FeedbackOutlinedButton(
+                    onClick = {
+                        showErrors = true
+                        if (canSave && parsedPort != null) {
+                            onTestConnectionClicked(
+                                name.trim(),
+                                host.trim(),
+                                parsedPort,
+                                username.trim(),
+                                authType,
+                                password,
+                                privateKey,
+                                workDirectory.trim(),
+                                postConnectCommand.trim(),
+                                parsedTerminalFontSize ?: 12,
+                                terminalWrapChoice,
+                                terminalTerm.trim(),
+                                terminalShortcuts.trim(),
+                                persistentSessionMode
+                            )
+                        }
+                    },
+                    enabled = canSave && !isTestingConnection,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.medium
+                ) {
+                    Text(if (isTestingConnection) "Testing connection..." else "Test Connection")
+                }
+
+                if (connectionTestStatus.isNotBlank()) {
+                    Text(
+                        text = connectionTestStatus,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                }
             }
 
             FeedbackButton(
                 onClick = {
                     showErrors = true
-                    if (canSave && parsedPort != null) {
+                    if (canSave) {
                         onSaveClicked(
                             name.trim(),
-                            host.trim(),
-                            parsedPort,
-                            username.trim(),
-                            authType,
+                            if (isLocalMode) host.trim().ifBlank { LocalEnvironmentDetector.BUILTIN_SHELL } else host.trim(),
+                            if (isLocalMode) 0 else (parsedPort ?: 22),
+                            if (isLocalMode) "local" else username.trim(),
+                            if (isLocalMode) AUTH_TYPE_LOCAL else authType,
                             password,
                             privateKey,
                             workDirectory.trim(),
@@ -464,7 +584,7 @@ fun SshAddScreen(
                             terminalWrapChoice,
                             terminalTerm.trim(),
                             terminalShortcuts.trim(),
-                            persistentSessionMode,
+                            if (isLocalMode) PERSISTENT_SESSION_NONE else persistentSessionMode,
                             serverDisplayName.trim()
                         )
                     }
@@ -474,7 +594,13 @@ fun SshAddScreen(
                     .padding(top = 8.dp),
                 shape = MaterialTheme.shapes.medium
             ) {
-                Text(if (isCopyMode) "Save Workspace" else "Save Securely")
+                Text(
+                    when {
+                        isCopyMode -> language.text("保存工作区", "Save Workspace")
+                        isLocalMode -> language.text("保存本地终端", "Save Local Terminal")
+                        else -> language.text("安全保存", "Save Securely")
+                    }
+                )
             }
         }
     }

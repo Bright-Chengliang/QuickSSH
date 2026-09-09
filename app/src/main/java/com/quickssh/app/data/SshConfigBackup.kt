@@ -42,6 +42,7 @@ object SshConfigBackupCodec {
     private const val FORMAT_VERSION = 2
     private const val AUTH_TYPE_PASSWORD = "PASSWORD"
     private const val AUTH_TYPE_PRIVATE_KEY = "PRIVATE_KEY"
+    private const val AUTH_TYPE_LOCAL = "LOCAL"
     private const val KDF_ALGORITHM = "PBKDF2WithHmacSHA256"
     private const val CIPHER_ALGORITHM = "AES/GCM/NoPadding"
     private const val KEY_ALGORITHM = "AES"
@@ -114,17 +115,17 @@ object SshConfigBackupCodec {
 
     private fun decodePlain(json: String): List<SshConfigBackupRecord> {
         val root = JSONObject(json)
-        require(root.optString("app") == APP_NAME) { "This is not a QuickSSH backup file." }
-        require(root.optInt("formatVersion", FORMAT_VERSION) <= FORMAT_VERSION) {
-            "This QuickSSH backup format is newer than this app supports."
-        }
+        val app = root.optString("app")
+        require(app.isBlank() || app.equals(APP_NAME, ignoreCase = true)) { "This is not a QuickSSH backup file." }
+        val formatVersion = root.optInt("formatVersion", root.optInt("version", FORMAT_VERSION))
+        require(formatVersion >= 1) { "Invalid QuickSSH backup format version." }
 
         val servers = root.optJSONArray("servers")
             ?: throw IllegalArgumentException("Backup file has no servers list.")
         return buildList {
             for (index in 0 until servers.length()) {
                 val item = servers.optJSONObject(index) ?: continue
-                add(item.toBackupRecord())
+                runCatching { item.toBackupRecord() }.getOrNull()?.let { add(it) }
             }
         }
     }
@@ -216,14 +217,22 @@ object SshConfigBackupCodec {
     }
 
     private fun JSONObject.toBackupRecord(): SshConfigBackupRecord {
-        val host = optString("host").trim()
-        val username = optString("username").trim()
-        val port = optInt("port", 22)
-        require(host.isNotBlank()) { "A server entry is missing host." }
-        require(username.isNotBlank()) { "A server entry is missing username." }
-        require(port in 1..65535) { "A server entry has an invalid port." }
+        val rawAuthType = optString("authType", AUTH_TYPE_PASSWORD).trim()
+        val authType = normalizedAuthType(rawAuthType)
+        val isLocal = authType == AUTH_TYPE_LOCAL || optString("host").trim() == "/system/bin/sh"
 
-        val name = optString("name").trim().ifBlank { "$username@$host:$port" }
+        val rawHost = optString("host").trim()
+        val host = if (rawHost.isNotBlank()) rawHost else if (isLocal) "/system/bin/sh" else "127.0.0.1"
+
+        val rawUsername = optString("username").trim()
+        val username = if (rawUsername.isNotBlank()) rawUsername else if (isLocal) "local" else "root"
+
+        val parsedPort = optInt("port", if (isLocal) 0 else 22)
+        val port = if (parsedPort in 1..65535) parsedPort else if (isLocal) 0 else 22
+
+        val name = optString("name").trim().ifBlank {
+            if (isLocal) "Local Terminal" else "$username@$host:$port"
+        }
         val terminalTerm = optString("terminalTerm", "xterm-256color").trim().ifBlank { "xterm-256color" }
 
         return SshConfigBackupRecord(
@@ -231,7 +240,7 @@ object SshConfigBackupCodec {
             host = host,
             port = port,
             username = username,
-            authType = normalizedAuthType(optString("authType", AUTH_TYPE_PASSWORD)),
+            authType = authType,
             password = optNullableString("password"),
             privateKey = optNullableString("privateKey"),
             workDirectory = optNullableString("workDirectory"),
@@ -269,7 +278,11 @@ object SshConfigBackupCodec {
     }
 
     private fun normalizedAuthType(authType: String): String {
-        return if (authType == AUTH_TYPE_PRIVATE_KEY) AUTH_TYPE_PRIVATE_KEY else AUTH_TYPE_PASSWORD
+        return when {
+            authType.equals(AUTH_TYPE_LOCAL, ignoreCase = true) -> AUTH_TYPE_LOCAL
+            authType.equals(AUTH_TYPE_PRIVATE_KEY, ignoreCase = true) -> AUTH_TYPE_PRIVATE_KEY
+            else -> AUTH_TYPE_PASSWORD
+        }
     }
 
     private fun JSONObject.optNullableString(name: String): String? {

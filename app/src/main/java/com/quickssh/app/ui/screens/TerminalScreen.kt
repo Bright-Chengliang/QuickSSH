@@ -34,9 +34,11 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -63,12 +65,14 @@ import com.quickssh.app.ui.theme.QuickSshTerminalMuted
 import com.quickssh.app.ui.theme.QuickSshTerminalSelection
 import com.quickssh.app.ui.theme.QuickSshTerminalText
 import com.quickssh.app.ui.theme.QuickSshConnected
+import com.termux.terminal.TerminalSession
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun TerminalScreen(
     config: SshConfig,
+    termuxSession: TerminalSession? = null,
     logs: List<String>,
     alternateScreen: Boolean,
     applicationCursorKeys: Boolean,
@@ -100,6 +104,7 @@ fun TerminalScreen(
     val lazyListState = rememberLazyListState()
     val clipboardManager = LocalClipboardManager.current
     val configuration = LocalConfiguration.current
+    val focusManager = LocalFocusManager.current
     val isLandscape = configuration.screenWidthDp > configuration.screenHeightDp
     val terminalFontSizeSp = terminalDisplayFontSizeSp(config.terminalFontSizeSp)
     val terminalLineHeightSp = terminalDisplayLineHeightSp(terminalFontSizeSp)
@@ -115,7 +120,11 @@ fun TerminalScreen(
         )
     }
     fun submitCommand(command: String) {
-        onLineSend(command)
+        if (termuxSession != null) {
+            termuxSession.write(command + "\r")
+        } else {
+            onLineSend(command)
+        }
         commandHistory = addCommandToHistory(commandHistory, command)
         historyIndex = -1
         inputCmd = ""
@@ -143,7 +152,11 @@ fun TerminalScreen(
 
     LaunchedEffect(pendingInputInsertion) {
         val insertion = pendingInputInsertion?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
-        inputCmd = appendTerminalInputReference(inputCmd, insertion)
+        if (termuxSession != null) {
+            termuxSession.write(insertion)
+        } else {
+            inputCmd = appendTerminalInputReference(inputCmd, insertion)
+        }
         onPendingInputInsertionConsumed()
     }
 
@@ -183,7 +196,33 @@ fun TerminalScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Connected: ${config.name} (${config.host})") },
+                title = {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            text = config.name.ifBlank { if (config.isLocalSession) "Local Terminal" else config.host },
+                            style = MaterialTheme.typography.titleMedium.copy(fontSize = 15.sp),
+                            color = Color.White,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        val subtitle = if (config.isLocalSession) {
+                            config.serverDisplayName?.takeIf { it.isNotBlank() } ?: "Local Shell"
+                        } else {
+                            val hostInfo = if (config.port != 22) "${config.host}:${config.port}" else config.host
+                            if (config.username.isNotBlank()) "${config.username}@$hostInfo" else hostInfo
+                        }
+                        Text(
+                            text = subtitle,
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                            color = QuickSshTerminalMuted,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = QuickSshTerminalChrome,
                     titleContentColor = Color.White
@@ -289,83 +328,99 @@ fun TerminalScreen(
                     )
                     .padding(horizontal = 6.dp, vertical = 4.dp)
 
-                LaunchedEffect(columns, rows, widthPx, heightPx) {
-                    val nextSize = TerminalBuffer.Size(
-                        columns = columns,
-                        rows = rows,
-                        widthPixels = widthPx,
-                        heightPixels = heightPx
-                    )
-                    if (shouldDispatchTerminalResize(
-                            previousSize = lastReportedTerminalSize,
-                            nextSize = nextSize
+                if (termuxSession == null) {
+                    LaunchedEffect(columns, rows, widthPx, heightPx) {
+                        val nextSize = TerminalBuffer.Size(
+                            columns = columns,
+                            rows = rows,
+                            widthPixels = widthPx,
+                            heightPixels = heightPx
                         )
-                    ) {
-                        lastReportedTerminalSize = nextSize
-                        onTerminalResize(nextSize)
+                        if (shouldDispatchTerminalResize(
+                                previousSize = lastReportedTerminalSize,
+                                nextSize = nextSize
+                            )
+                        ) {
+                            lastReportedTerminalSize = nextSize
+                            onTerminalResize(nextSize)
+                        }
                     }
                 }
 
                 Box(modifier = Modifier.fillMaxSize()) {
-                    LazyColumn(
-                        state = lazyListState,
-                        modifier = terminalListModifier
-                    ) {
-                        itemsIndexed(logs) { index, log ->
-                            val styledText = remember(log) { AnsiRenderer.renderAnsiText(log) }
-                            val copyText = remember(log) {
-                                AnsiRenderer.cleanNonSgrAnsi(log).stripSgrAnsi()
-                            }
-                            val rowSelected = index in selectedCopyRows
-
-                            Text(
-                                text = styledText,
-                                style = terminalOutputTextStyle,
-                                softWrap = effectiveAutoWrap,
-                                modifier = (if (effectiveAutoWrap) {
-                                    Modifier.fillMaxWidth()
-                                } else {
-                                    Modifier.widthIn(min = terminalViewportWidth)
-                                })
-                                    .background(if (rowSelected) QuickSshTerminalSelection.copy(alpha = 0.32f) else Color.Transparent)
-                                    .combinedClickable(
-                                        onClick = {
-                                            if (copyMode) {
-                                                selectedCopyRows = if (rowSelected) selectedCopyRows - index else selectedCopyRows + index
-                                            }
-                                        },
-                                        onLongClick = {
-                                            if (copyMode) {
-                                                selectedCopyRows = if (rowSelected) selectedCopyRows - index else selectedCopyRows + index
-                                            } else if (copyText.isNotBlank()) {
-                                                clipboardManager.setText(AnnotatedString(copyText))
-                                            }
-                                        }
-                                    )
-                                    .padding(vertical = 0.dp)
-                            )
-                        }
-                    }
-
-                    if (shouldShowJumpToLatestButton(
-                            totalItems = terminalItemCount,
-                            alternateScreen = alternateScreen,
-                            autoFollowOutput = autoFollowOutput,
-                            copyMode = copyMode
+                    if (termuxSession != null) {
+                        TermuxTerminalComponent(
+                            session = termuxSession,
+                            fontSizeSp = terminalFontSizeSp,
+                            ctrlKeyActive = ctrlModifier,
+                            altKeyActive = altModifier,
+                            onCtrlKeyConsumed = { ctrlModifier = false },
+                            onAltKeyConsumed = { altModifier = false },
+                            onSingleTap = { focusManager.clearFocus() },
+                            onTerminalResize = onTerminalResize,
+                            modifier = Modifier.fillMaxSize()
                         )
-                    ) {
-                        SmallFloatingActionButton(
-                            onClick = { autoFollowOutput = true },
-                            containerColor = QuickSshTerminalAccent,
-                            contentColor = Color.White,
-                            modifier = Modifier
-                                .align(Alignment.BottomEnd)
-                                .padding(16.dp)
+                    } else {
+                        LazyColumn(
+                            state = lazyListState,
+                            modifier = terminalListModifier
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.KeyboardArrowDown,
-                                contentDescription = "Jump to latest"
+                            itemsIndexed(logs) { index, log ->
+                                val styledText = remember(log) { AnsiRenderer.renderAnsiText(log) }
+                                val copyText = remember(log) {
+                                    AnsiRenderer.cleanNonSgrAnsi(log).stripSgrAnsi()
+                                }
+                                val rowSelected = index in selectedCopyRows
+
+                                Text(
+                                    text = styledText,
+                                    style = terminalOutputTextStyle,
+                                    softWrap = effectiveAutoWrap,
+                                    modifier = (if (effectiveAutoWrap) {
+                                        Modifier.fillMaxWidth()
+                                    } else {
+                                        Modifier.widthIn(min = terminalViewportWidth)
+                                    })
+                                        .background(if (rowSelected) QuickSshTerminalSelection.copy(alpha = 0.32f) else Color.Transparent)
+                                        .combinedClickable(
+                                            onClick = {
+                                                if (copyMode) {
+                                                    selectedCopyRows = if (rowSelected) selectedCopyRows - index else selectedCopyRows + index
+                                                }
+                                            },
+                                            onLongClick = {
+                                                if (copyMode) {
+                                                    selectedCopyRows = if (rowSelected) selectedCopyRows - index else selectedCopyRows + index
+                                                } else if (copyText.isNotBlank()) {
+                                                    clipboardManager.setText(AnnotatedString(copyText))
+                                                }
+                                            }
+                                        )
+                                        .padding(vertical = 0.dp)
+                                )
+                            }
+                        }
+
+                        if (shouldShowJumpToLatestButton(
+                                totalItems = terminalItemCount,
+                                alternateScreen = alternateScreen,
+                                autoFollowOutput = autoFollowOutput,
+                                copyMode = copyMode
                             )
+                        ) {
+                            SmallFloatingActionButton(
+                                onClick = { autoFollowOutput = true },
+                                containerColor = QuickSshTerminalAccent,
+                                contentColor = Color.White,
+                                modifier = Modifier
+                                    .align(Alignment.BottomEnd)
+                                    .padding(16.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.KeyboardArrowDown,
+                                    contentDescription = "Jump to latest"
+                                )
+                            }
                         }
                     }
                 }
@@ -380,7 +435,13 @@ fun TerminalScreen(
                     onCtrlModifierChange = { ctrlModifier = it },
                     onAltModifierChange = { altModifier = it },
                     onShortcutCommand = { submitShortcut(it) },
-                    onRawInputSend = onRawInputSend,
+                    onRawInputSend = { data ->
+                        if (termuxSession != null) {
+                            termuxSession.write(data)
+                        } else {
+                            onRawInputSend(data)
+                        }
+                    },
                     workDirectory = config.workDirectory,
                     workspaceShortcuts = config.terminalShortcuts,
                     applicationCursorKeys = applicationCursorKeys,
@@ -425,8 +486,13 @@ fun TerminalScreen(
                     BasicTextField(
                         value = inputCmd,
                         onValueChange = { value ->
-                            if (shouldConfirmMultilineInputChange(inputCmd, value)) {
-                                pendingPaste = value
+                            if (value.contains('\n') || value.contains('\r')) {
+                                if (shouldConfirmMultilineInputChange(inputCmd, value)) {
+                                    pendingPaste = value
+                                } else {
+                                    val sanitized = value.replace("\r", "").replace("\n", "")
+                                    submitCommand(if (sanitized.isNotEmpty()) sanitized else inputCmd)
+                                }
                             } else {
                                 inputCmd = value
                             }
@@ -438,6 +504,7 @@ fun TerminalScreen(
                             letterSpacing = 0.sp,
                             platformStyle = PlatformTextStyle(includeFontPadding = false)
                         ),
+                        singleLine = true,
                         cursorBrush = SolidColor(Color.White),
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                         keyboardActions = KeyboardActions(
@@ -452,7 +519,7 @@ fun TerminalScreen(
                     )
                     TerminalInputIconButton(
                         drawableResId = R.drawable.ic_file_upload,
-                        contentDescription = "Upload file",
+                        contentDescription = if (config.isLocalSession) "Select file path" else "Upload file",
                         enabled = true,
                         compact = isLandscape,
                         onClick = onQuickUploadClicked
@@ -484,7 +551,11 @@ fun TerminalScreen(
             text = { Text("Paste ${paste.lineSequence().count()} lines into the terminal?") },
             confirmButton = {
                 FeedbackTextButton(onClick = {
-                    onRawInputSend(terminalPastePayload(paste, bracketedPasteMode))
+                    if (termuxSession != null) {
+                        termuxSession.write(paste)
+                    } else {
+                        onRawInputSend(terminalPastePayload(paste, bracketedPasteMode))
+                    }
                     inputCmd = ""
                     historyIndex = -1
                     pendingPaste = null
@@ -573,7 +644,7 @@ private fun String.stripSgrAnsi(): String {
     return replace(Regex("\u001B\\[[0-9;]*m"), "")
 }
 
-private data class TerminalKey(
+internal data class TerminalKey(
     val label: String,
     val sequence: String,
     val accent: Boolean = false
@@ -789,12 +860,14 @@ private fun TerminalKeyButton(
     }
 }
 
-private fun compactKeys(applicationCursorKeys: Boolean) = listOf(
+internal fun compactKeys(applicationCursorKeys: Boolean) = listOf(
     TerminalKey("Esc", "\u001B", accent = true),
     TerminalKey("Up", terminalCursorKeySequence("up", applicationCursorKeys), accent = true),
     TerminalKey("Down", terminalCursorKeySequence("down", applicationCursorKeys), accent = true),
     TerminalKey("Left", terminalCursorKeySequence("left", applicationCursorKeys), accent = true),
     TerminalKey("Right", terminalCursorKeySequence("right", applicationCursorKeys), accent = true),
+    TerminalKey("PgUp", "\u001B[5~", accent = true),
+    TerminalKey("PgDn", "\u001B[6~", accent = true),
     TerminalKey("Tab", "\t", accent = true),
     TerminalKey("Ctrl+C", "\u0003", accent = true)
 )

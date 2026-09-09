@@ -26,7 +26,8 @@ data class SshConfig(
     val serverNodeId: Long = 0,
     val serverSortOrder: Int = 0,
     val workspaceSortOrder: Int = 0,
-    val serverDisplayName: String? = null
+    val serverDisplayName: String? = null,
+    val isLocalSession: Boolean = false
 )
 
 /** Persistent session mode: no terminal multiplexer wrapping. */

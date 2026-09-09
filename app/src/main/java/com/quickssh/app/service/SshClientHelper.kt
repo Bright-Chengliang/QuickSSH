@@ -8,6 +8,7 @@ import com.quickssh.app.data.PERSISTENT_SESSION_TMUX
 import com.quickssh.app.data.SshConfig
 import com.quickssh.app.security.KeystoreManager
 import com.quickssh.app.utils.TerminalBuffer
+import com.termux.terminal.TerminalSession
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -35,13 +36,14 @@ import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 
 class SshClientHelper(
-    private val config: SshConfig,
+    val config: SshConfig,
     private val appContext: Context,
     initialTerminalSize: TerminalBuffer.Size = TerminalBuffer.Size(
         TerminalBuffer.DEFAULT_COLUMNS,
         TerminalBuffer.DEFAULT_ROWS
-    )
-) {
+    ),
+    override val sessionId: String = "ssh-${config.id}-${System.currentTimeMillis()}"
+) : TerminalSessionClient {
     companion object {
         private const val KEEPALIVE_INTERVAL_SECONDS = 20
         private const val SHELL_STARTUP_COMMAND_DELAY_MS = 600L
@@ -76,6 +78,10 @@ class SshClientHelper(
     private var sshSession: Session? = null
     private var shell: Session.Shell? = null
     private var outputStream: OutputStream? = null
+    private val _termuxSessionState = MutableStateFlow<TerminalSession?>(null)
+    override val termuxSessionFlow: StateFlow<TerminalSession?> = _termuxSessionState.asStateFlow()
+    override val termuxSession: TerminalSession? get() = _termuxSessionState.value
+    private var sshBridgeResult: SshSessionBridgeResult? = null
 
     @Volatile
     private var isConnected = false
@@ -98,25 +104,25 @@ class SshClientHelper(
         replay = 64,
         extraBufferCapacity = 128
     )
-    val terminalOutput: SharedFlow<String> = _terminalOutput
+    override val terminalOutput: SharedFlow<String> = _terminalOutput
     private val recentOutputReplay = BoundedTextReplay(
         maxChunks = RECENT_OUTPUT_REPLAY_MAX_CHUNKS,
         maxChars = RECENT_OUTPUT_REPLAY_MAX_CHARS
     )
-    private val historyBuffer = TerminalBuffer(
+    override val historyBuffer = TerminalBuffer(
         maxLines = HISTORY_BUFFER_MAX_LINES,
         initialColumns = initialTerminalSize.columns,
         initialRows = initialTerminalSize.rows
     )
-    val historyFile = TerminalHistoryFile(appContext, "session-${config.id}-${System.currentTimeMillis()}")
+    override val historyFile = TerminalHistoryFile(appContext, "session-${config.id}-${System.currentTimeMillis()}")
 
     private val _status = MutableStateFlow(SshSessionStatus.CONNECTING)
-    val status: StateFlow<SshSessionStatus> = _status.asStateFlow()
+    override val status: StateFlow<SshSessionStatus> = _status.asStateFlow()
 
     private val _statusMessage = MutableStateFlow("Connecting")
-    val statusMessage: StateFlow<String> = _statusMessage.asStateFlow()
+    override val statusMessage: StateFlow<String> = _statusMessage.asStateFlow()
 
-    fun connect() {
+    override fun connect() {
         userRequestedDisconnect = false
         updateStatus(SshSessionStatus.CONNECTING, "Connecting to ${config.host}:${config.port}")
         scope.launch {
@@ -165,7 +171,33 @@ class SshClientHelper(
                 reconnectAttempt = 0
                 updateStatus(SshSessionStatus.CONNECTED, "Connected to ${config.host}:${config.port}")
 
-                launchReaderRoutine(shell?.inputStream)
+                val activeShell = shell
+                if (activeShell != null) {
+                    val termuxManager = TermuxSessionManager(appContext, scope)
+                    val bridge = termuxManager.createSshSession(
+                        sshInputStream = activeShell.inputStream,
+                        sshOutputStream = activeShell.outputStream,
+                        initialCols = terminalSize.columns,
+                        initialRows = terminalSize.rows,
+                        terminalTerm = config.terminalTerm,
+                        onDataReceived = {
+                            lastRemoteOutputAtMillis = System.currentTimeMillis()
+                        },
+                        onSessionFinished = {
+                            if (!userRequestedDisconnect) {
+                                closeCurrentConnection()
+                            }
+                        }
+                    )
+                    sshBridgeResult = bridge
+                    _termuxSessionState.value = bridge?.session
+
+                    if (bridge == null) {
+                        launchReaderRoutine(shell?.inputStream)
+                    }
+                } else {
+                    launchReaderRoutine(shell?.inputStream)
+                }
                 delay(SHELL_STARTUP_COMMAND_DELAY_MS)
 
                 // Persistent session: attach to tmux/screen if configured (Linux/macOS only)
@@ -252,11 +284,12 @@ class SshClientHelper(
         return true
     }
 
-    fun resizeTerminal(size: TerminalBuffer.Size) {
+    override fun resizeTerminal(size: TerminalBuffer.Size) {
         val next = size.sanitized()
         if (next == terminalSize) return
         historyBuffer.resize(next)
         terminalSize = next
+        _termuxSessionState.value?.updateSize(next.columns, next.rows)
         scope.launch(Dispatchers.IO) {
             try {
                 shell?.changeWindowDimensions(
@@ -376,11 +409,11 @@ class SshClientHelper(
         }
     }
 
-    fun sendLine(line: String) {
-        sendCommand(terminalLinePayload(line))
+    override fun sendLine(line: String) {
+        _termuxSessionState.value?.write(terminalLinePayload(line)) ?: sendCommand(terminalLinePayload(line))
     }
 
-    fun runCodexResumeShortcut(command: String, workDirectory: String?) {
+    override fun runCodexResumeShortcut(command: String, workDirectory: String?) {
         val resumeCommand = command.trim().ifBlank { "codex resume --last --no-alt-screen" }
         val previewCommand = codexTranscriptPreviewCommand(workDirectory)
         if (previewCommand == null) {
@@ -466,8 +499,13 @@ class SshClientHelper(
         }
     }
 
-    fun sendRawInput(data: String) {
-        if (!isConnected || outputStream == null || data.isEmpty()) return
+    override fun sendRawInput(data: String) {
+        if (data.isEmpty()) return
+        _termuxSessionState.value?.let {
+            it.write(data)
+            return
+        }
+        if (!isConnected || outputStream == null) return
         scope.launch(Dispatchers.IO) {
             try {
                 outputStream?.write(data.toByteArray(Charsets.UTF_8))
@@ -478,7 +516,7 @@ class SshClientHelper(
             }
         }
     }
-    fun reconnectNow() {
+    override fun reconnectNow() {
         if (userRequestedDisconnect || isConnected) return
         scope.launch(Dispatchers.IO) {
             emitLog("\n[QuickSSH] Manual reconnect requested.")
@@ -486,7 +524,7 @@ class SshClientHelper(
             connectOnce()
         }
     }
-    fun reconnectWhenNetworkAvailable() {
+    override fun reconnectWhenNetworkAvailable() {
         if (!shouldReconnectOnNetworkAvailable(userRequestedDisconnect, isConnected, _status.value)) return
         scope.launch(Dispatchers.IO) {
             emitLog("\n[QuickSSH] Network is available. Reconnect will resume now.")
@@ -494,7 +532,7 @@ class SshClientHelper(
         }
     }
 
-    fun disconnect() {
+    override fun disconnect() {
         userRequestedDisconnect = true
         closeCurrentConnection()
         updateStatus(SshSessionStatus.DISCONNECTED, "Disconnected")
@@ -514,6 +552,9 @@ class SshClientHelper(
 
     private fun closeCurrentConnection() {
         isConnected = false
+        sshBridgeResult?.closeAction?.invoke()
+        sshBridgeResult = null
+        _termuxSessionState.value = null
         try {
             shell?.close()
             sshSession?.close()
@@ -537,7 +578,7 @@ class SshClientHelper(
         _terminalOutput.emit(text)
     }
 
-    fun recentOutputSnapshot(): List<String> {
+    override fun recentOutputSnapshot(): List<String> {
         return recentOutputReplay.snapshot()
     }
 

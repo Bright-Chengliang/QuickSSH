@@ -6,6 +6,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Update
+import com.quickssh.app.service.AUTH_TYPE_LOCAL
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -258,16 +259,17 @@ interface SshConfigDao {
     ): SshServerNode {
         val normalizedHost = host.trim()
         val normalizedUsername = username.trim()
+        val resolvedAuthType = if (isLocalSession || authType == AUTH_TYPE_LOCAL) AUTH_TYPE_LOCAL else authType
         val resolvedDisplayName = serverDisplayName?.trim()?.takeIf { it.isNotEmpty() }
             ?: defaultDisplayName?.trim()?.takeIf { it.isNotEmpty() }
-            ?: "$normalizedUsername@$normalizedHost:$port"
+            ?: if (resolvedAuthType == AUTH_TYPE_LOCAL) "Local Terminal" else "$normalizedUsername@$normalizedHost:$port"
         return SshServerNode(
             id = id,
             displayName = resolvedDisplayName,
             host = normalizedHost,
             port = port,
             username = normalizedUsername,
-            authType = authType,
+            authType = resolvedAuthType,
             encryptedPassword = encryptedPassword,
             encryptedPrivateKey = encryptedPrivateKey,
             sortOrder = sortOrder,
@@ -318,7 +320,8 @@ interface SshConfigDao {
                 w.updateTime AS updateTime,
                 s.id AS serverNodeId,
                 s.sortOrder AS serverSortOrder,
-                w.sortOrder AS workspaceSortOrder
+                w.sortOrder AS workspaceSortOrder,
+                (CASE WHEN s.authType = 'LOCAL' THEN 1 ELSE 0 END) AS isLocalSession
             FROM ssh_workspaces AS w
             INNER JOIN ssh_server_nodes AS s ON s.id = w.serverNodeId
         """

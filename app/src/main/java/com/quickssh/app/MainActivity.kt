@@ -27,6 +27,7 @@ import androidx.biometric.BiometricPrompt
 import androidx.activity.compose.BackHandler
 import androidx.core.app.ActivityCompat
 import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.lifecycleScope
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -75,10 +76,13 @@ import com.quickssh.app.data.workspaceLabel
 import com.quickssh.app.security.KeystoreManager
 import com.quickssh.app.service.FileTransferHelper
 import com.quickssh.app.service.KnownHostsVerifier
+import com.quickssh.app.service.LocalPathResolver
 import com.quickssh.app.service.SshForegroundService
+import com.quickssh.app.service.AUTH_TYPE_LOCAL
 import com.quickssh.app.service.AUTH_TYPE_PASSWORD
 import com.quickssh.app.service.AUTH_TYPE_PRIVATE_KEY
 import com.quickssh.app.service.SshSessionInfo
+import com.quickssh.app.service.SshSessionStatus
 import com.quickssh.app.service.TransferForegroundService
 import com.quickssh.app.service.TunnelForegroundService
 import com.quickssh.app.service.TunnelStatus
@@ -105,6 +109,7 @@ import com.quickssh.app.ui.screens.transferTaskProgressDetail
 import com.quickssh.app.ui.screens.transferTasksWithBatchState
 import com.quickssh.app.ui.theme.QuickSshTheme
 import com.quickssh.app.utils.TerminalBuffer
+import com.termux.terminal.TerminalSession
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
@@ -151,6 +156,7 @@ private class TerminalSessionUiState(
 ) {
     val bufferMutex = Mutex()
     var config by mutableStateOf<SshConfig?>(null)
+    var termuxSession by mutableStateOf<TerminalSession?>(null)
     var logs by mutableStateOf<List<String>>(emptyList())
     var alternateScreen by mutableStateOf(false)
     var applicationCursorKeys by mutableStateOf(false)
@@ -479,6 +485,35 @@ class MainActivity : FragmentActivity() {
                         color = MaterialTheme.colorScheme.background
                     ) {
                         AppNavigation()
+                    }
+                }
+            }
+        }
+        handleImportIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        handleImportIntent(intent)
+    }
+
+    private fun handleImportIntent(intent: Intent?) {
+        if (intent?.action == "com.quickssh.app.IMPORT_BACKUP") {
+            val filePath = intent.getStringExtra("file_path")
+            val password = intent.getStringExtra("password")
+            if (!filePath.isNullOrBlank()) {
+                lifecycleScope.launch(Dispatchers.IO) {
+                    try {
+                        val json = java.io.File(filePath).readText(Charsets.UTF_8)
+                        val records = SshConfigBackupCodec.decode(json, password)
+                        val dao = db.sshConfigDao()
+                        records.forEach { record ->
+                            val config = record.toSshConfig(System.currentTimeMillis())
+                            dao.insertConfig(config)
+                        }
+                        Log.i("MainActivity", "Successfully imported ${records.size} configs from $filePath")
+                    } catch (e: Exception) {
+                        Log.e("MainActivity", "Failed to import backup from intent: ${e.message}", e)
                     }
                 }
             }
@@ -1087,6 +1122,28 @@ class MainActivity : FragmentActivity() {
         fun startTerminalQuickUpload(sessionId: String, uris: List<Uri>) {
             val state = terminalStates[sessionId] ?: return
             val config = state.config ?: return
+
+            if (config.isLocalSession || config.authType == AUTH_TYPE_LOCAL) {
+                // Local Terminal Mode: Skip SFTP, resolve local filesystem paths and insert immediately
+                scope.launch(Dispatchers.IO) {
+                    val resolvedReferences = mutableListOf<String>()
+                    uris.forEach { uri ->
+                        val localPath = LocalPathResolver.resolvePath(applicationContext, uri)
+                        resolvedReferences.add(shellSafePathReference(localPath))
+                    }
+                    val insertion = resolvedReferences.joinToString(" ")
+                    withContext(Dispatchers.Main) {
+                        state.pendingInputInsertion = insertion
+                        state.quickUploadStatus = if (uris.size == 1) {
+                            "Path inserted: ${displayNameFromUri(uris.first())}"
+                        } else {
+                            "Inserted ${uris.size} file paths"
+                        }
+                    }
+                }
+                return
+            }
+
             val remoteDirectory = terminalQuickUploadDirectory(config.workDirectory)
             state.quickUploadStatus = "Uploading ${uris.size} file${if (uris.size == 1) "" else "s"} to $remoteDirectory..."
             scope.launch {
@@ -1327,6 +1384,47 @@ class MainActivity : FragmentActivity() {
 
                 val helper = currentHelper() ?: return@launch
                 var hasOpenedTerminal = !openTerminalOnFirstOutput
+                val openTerminalIfWaiting: suspend () -> Unit = {
+                    if (!hasOpenedTerminal) {
+                        hasOpenedTerminal = true
+                        withContext(Dispatchers.Main) {
+                            showConnectingDialog = false
+                            connectingConfig = null
+                            activeSessionId = sessionId
+                            lastTerminalSessionId = sessionId
+                            currentScreen = "TERMINAL"
+                        }
+                    }
+                }
+
+                withContext(Dispatchers.Main) {
+                    if (helper.termuxSession != null) {
+                        state.termuxSession = helper.termuxSession
+                        openTerminalIfWaiting()
+                    }
+                }
+                scope.launch {
+                    helper.termuxSessionFlow.collect { nativeSession ->
+                        withContext(Dispatchers.Main) {
+                            state.termuxSession = nativeSession
+                            if (nativeSession != null) {
+                                openTerminalIfWaiting()
+                            }
+                        }
+                    }
+                }
+                scope.launch {
+                    helper.status.collect { status ->
+                        if (status == SshSessionStatus.CONNECTED) {
+                            openTerminalIfWaiting()
+                        } else if (status == SshSessionStatus.FAILED || status == SshSessionStatus.DISCONNECTED) {
+                            withContext(Dispatchers.Main) {
+                                showConnectingDialog = false
+                                connectingConfig = null
+                            }
+                        }
+                    }
+                }
                 var latestSnapshot: List<String> = withContext(Dispatchers.Main) { state.logs }
                 var lastUiUpdateAt = 0L
                 var pendingUiFlushJob: Job? = null
@@ -1407,16 +1505,7 @@ class MainActivity : FragmentActivity() {
                             replayChunksToSkip.removeFirst()
                             return@collect
                         }
-                        if (!hasOpenedTerminal) {
-                            hasOpenedTerminal = true
-                            withContext(Dispatchers.Main) {
-                                showConnectingDialog = false
-                                connectingConfig = null
-                                activeSessionId = sessionId
-                                lastTerminalSessionId = sessionId
-                                currentScreen = "TERMINAL"
-                            }
-                        }
+                        openTerminalIfWaiting()
 
                         val parsedOutput = state.bufferMutex.withLock {
                             val wasSynchronizedOutput = state.buffer.isSynchronizedOutputMode
@@ -2376,7 +2465,8 @@ class MainActivity : FragmentActivity() {
                                     terminalShortcuts = if (sShortcuts.isNotBlank()) sShortcuts else null,
                                     persistentSessionMode = sPersistentSession,
                                     serverNodeId = configToEdit?.serverNodeId ?: 0L,
-                                    serverDisplayName = if (sServerDisplayName.isNotBlank()) sServerDisplayName else null
+                                    serverDisplayName = if (sServerDisplayName.isNotBlank()) sServerDisplayName else null,
+                                    isLocalSession = (sAuthType == AUTH_TYPE_LOCAL)
                                 )
                                 db.sshConfigDao().insertConfig(newConfig)
                                 Toast.makeText(
@@ -2403,7 +2493,8 @@ class MainActivity : FragmentActivity() {
                                     terminalShortcuts = if (sShortcuts.isNotBlank()) sShortcuts else null,
                                     persistentSessionMode = sPersistentSession,
                                     updateTime = updatedAt,
-                                    serverDisplayName = if (sServerDisplayName.isNotBlank()) sServerDisplayName else originalConfig.serverDisplayName
+                                    serverDisplayName = if (sServerDisplayName.isNotBlank()) sServerDisplayName else originalConfig.serverDisplayName,
+                                    isLocalSession = (sAuthType == AUTH_TYPE_LOCAL)
                                 )
                                 db.sshConfigDao().updateConfig(updatedConfig)
                                 Toast.makeText(this@MainActivity, "Configuration updated", Toast.LENGTH_SHORT).show()
@@ -2462,8 +2553,21 @@ class MainActivity : FragmentActivity() {
                         currentScreen = "LIST"
                     }
                 } else {
+                    LaunchedEffect(sessionId, boundService) {
+                        while (true) {
+                            val client = boundService?.getSessionClient(sessionId)
+                            if (client != null) {
+                                state.termuxSession = client.termuxSession
+                                client.termuxSessionFlow.collect { nativeSession ->
+                                    state.termuxSession = nativeSession
+                                }
+                            }
+                            delay(100)
+                        }
+                    }
                     TerminalScreen(
                         config = stateConfig,
+                        termuxSession = state.termuxSession,
                         logs = state.logs,
                         alternateScreen = state.alternateScreen,
                         applicationCursorKeys = state.applicationCursorKeys,
@@ -2970,7 +3074,9 @@ class MainActivity : FragmentActivity() {
         val tunnelPresetsByWorkspace = db.sshConfigDao()
             .getAllTunnelPresets()
             .groupBy { preset -> preset.workspaceId }
-        val records = db.sshConfigDao().getAllConfigs().map { config ->
+        val records = db.sshConfigDao().getAllConfigs()
+            .filterNot { it.isLocalSession || it.authType == "LOCAL" }
+            .map { config ->
             SshConfigBackupRecord(
                 name = config.name,
                 host = config.host,
@@ -3129,7 +3235,7 @@ class MainActivity : FragmentActivity() {
 
     private fun decryptBackupValue(encryptedValue: String?): String? {
         val value = encryptedValue?.takeIf { it.isNotBlank() } ?: return null
-        return KeystoreManager.decrypt(value).takeIf { it.isNotEmpty() }
+        return runCatching { KeystoreManager.decrypt(value).takeIf { it.isNotEmpty() } }.getOrNull()
     }
 
     private fun SshTunnelPreset.toBackupRecord(): SshTunnelPresetBackupRecord {
