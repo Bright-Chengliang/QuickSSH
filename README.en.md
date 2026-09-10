@@ -1,6 +1,6 @@
 # QuickSSH
 
-> An Android SSH workspace for persistent terminals, SFTP transfers, and local port forwarding.
+> A full-stack Android terminal workspace for local shells, persistent SSH sessions, Termux engine, SFTP transfers, and local port forwarding.
 
 [中文版 README](README.md)
 
@@ -8,11 +8,11 @@
 [![Kotlin](https://img.shields.io/badge/Kotlin-1.9.22-7F52FF?logo=kotlin&logoColor=white)](gradle/libs.versions.toml)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-QuickSSH is a native Android SSH client built around real remote-development workflows: persistent shell sessions, SFTP file operations, and access to private services through SSH tunnels. It uses Jetpack Compose for the UI, SSHJ for SSH/SFTP, Room for local persistence, and Android Keystore for credential protection.
+QuickSSH is a native Android terminal workspace and SSH client built around real development workflows: local shell environments, persistent SSH sessions, multi-workspace profiles, Termux terminal engine, SFTP file operations, and access to private services through SSH tunnels. It uses Jetpack Compose for the UI, Termux kernel and SSHJ for local and remote sessions, Room for local persistence, and Android Keystore for credential protection.
 
 ## Why this project
 
-Mobile SSH tools often stop at “connect and type commands”. In practice, developers also need to switch between project workspaces, keep long-running sessions alive, move files with recoverable progress, and reach services that should remain private. QuickSSH brings these workflows into one explicit, testable local workspace.
+Mobile terminal tools often force a choice between a standalone local terminal (like Termux) that lacks modern multi-workspace ergonomics, or a basic SSH client that cannot run offline, drops connections in the background, and struggles with touch scrolling in full-screen TUI tools (like OpenCode or Codex). QuickSSH unifies local shells and remote SSH into a single dual-mode workspace with persistent background execution, recoverable file transfers, port forwarding, and responsive touch gestures.
 
 ## Design Highlights
 
@@ -75,12 +75,22 @@ Mobile SSH tools often stop at “connect and type commands”. In practice, dev
 
 <p align="center"><img src="docs/screenshots/settings-en.png" alt="QuickSSH security and bilingual settings" width="48%" /></p>
 
+### Local terminal mode and native Termux engine
+
+<ins><em>Run local shell scripts, Termux, or built-in Linux offline, with smooth touch gestures in full-screen TUI apps.</em></ins>
+
+**Motivation:** Developers frequently need to run local scripts, manage Git repositories, or interact with local AI CLIs (such as OpenCode or Codex) without requiring a remote network connection. Traditional approaches force users to switch between Termux and SSH apps, and often suffer from broken touch scrolling in full-screen TUI apps.
+
+**Implementation:** QuickSSH integrates Termux's native terminal core (`TerminalView` & `TerminalEmulator`), offering a standard PTY, full DEC control sequence support, and true-color ANSI rendering. The new Local Terminal Mode automatically detects and attaches to the system shell (`/system/bin/sh`), Termux environment (`/data/data/com.termux/files/usr/bin/bash`), or an embedded multi-arch Linux BusyBox container, fully sharing workspace profiles and foreground service persistence. For Windows ConPTY / SSH environments where mouse reporting is absent, QuickSSH translates vertical swipe gestures into VT PageUp/PageDown sequences, restoring smooth, native-like scrolling across chat histories in OpenCode and other TUI tools.
+
 ## Architecture
 
 ```mermaid
 flowchart LR
     UI[Jetpack Compose UI] --> DB[Room database]
     UI --> Services[Foreground services]
+    Services --> Termux[Termux terminal engine]
+    Termux --> Local[Local Shell / Termux / BusyBox]
     Services --> SSH[SSHJ SSH / SFTP]
     Services --> Tunnel[Local port forwarding]
     Credentials[Android Keystore] --> Services
@@ -93,9 +103,10 @@ app/src/main/java/com/quickssh/app/
 ├── MainActivity.kt              # Navigation and workflow orchestration
 ├── data/                        # Room entities, DAOs, migrations, backups
 ├── security/                    # Android Keystore encryption
-├── service/                     # SSH, SFTP, transfer, and tunnel services
-├── ui/screens/                  # Compose screens and interaction flows
+├── service/                     # Local PTY, SSH/SFTP, Termux bridge, and tunnel services
+├── ui/screens/                  # Compose screens, Termux TerminalView, and interaction flows
 └── utils/                       # ANSI rendering and terminal buffering
+app/src/main/jniLibs/            # Embedded multi-arch BusyBox (arm64, arm, x86, x86_64)
 net/schmizz/sshj/                # Small transfer-progress patch
 scripts/                         # Local build and emulator helpers
 ```
@@ -128,6 +139,7 @@ The APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
 
 - Android `minSdk 26`, `targetSdk 34`
 - Kotlin, Jetpack Compose, Material 3
+- Terminal Engine: Termux Terminal View & Emulator (v0.118.0) + embedded multi-arch Linux BusyBox PTY
 - Room
 - SSHJ and Bouncy Castle
 - Android Keystore and AndroidX Biometric

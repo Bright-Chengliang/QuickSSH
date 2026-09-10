@@ -1,6 +1,6 @@
 # QuickSSH
 
-> 面向真实远程开发工作流的 Android SSH 工作台：持久终端、SFTP 文件传输与 SSH 隧道。
+> 面向真实开发工作流的 Android 全栈终端工作台：本地 Shell、持久 SSH 终端、Termux 引擎、SFTP 文件传输与 SSH 隧道。
 
 [![Android](https://img.shields.io/badge/Android-API%2026%2B-3DDC84?logo=android&logoColor=white)](app/src/main/AndroidManifest.xml)
 [![Kotlin](https://img.shields.io/badge/Kotlin-1.9.22-7F52FF?logo=kotlin&logoColor=white)](gradle/libs.versions.toml)
@@ -8,13 +8,13 @@
 
 [English README](README.en.md)
 
-QuickSSH 是一款面向 Android 的 SSH 客户端，将服务器配置、多工作区、终端、文件传输和 SSH 隧道整合在一个应用中。它使用 Jetpack Compose 构建界面，通过 SSHJ 建立 SSH/SFTP 连接，并用 Android Keystore 加密保存在设备本地的密码和私钥。
+QuickSSH 是一款面向 Android 的终端工作台与 SSH 客户端，将本地 Shell、远程服务器配置、多工作区、Termux 终端引擎、文件传输和 SSH 隧道整合在一个应用中。它使用 Jetpack Compose 构建界面，通过 Termux 内核与 SSHJ 建立本地与远程会话，并用 Android Keystore 加密保存在设备本地的密码和私钥。
 
 Developed by [Bright-Chengliang](https://github.com/Bright-Chengliang) · © 2026 Chengliang Liu · [MIT License](LICENSE)
 
 ## 项目定位
 
-手机上的 SSH 工具通常只能解决“连上服务器并输入命令”，但真实工作流还包括多套环境切换、长连接保活、文件往返和访问内网服务。QuickSSH 的设计目标，是把这些高频但容易割裂的操作收敛到一个工作区，同时把凭据、后台任务和传输状态放在明确的边界内。
+手机上的终端工具通常要么只做“本地终端（如 Termux）”，缺乏多工作区与现代工作流整合；要么只做“简单 SSH 客户端”，无法在无网环境下离线工作，切后台容易丢连接，且全屏 TUI 工具（如 OpenCode、Codex）在触屏下难以顺畅滑动。QuickSSH 的设计目标，是把“本地 Shell + 远程 SSH”收敛为统一的双模全栈工作台，把多环境隔离、后台保活、文件往返、内网穿透以及丝滑触屏交互放在明确的边界内。
 
 ## 核心亮点与设计动机
 
@@ -77,12 +77,22 @@ Developed by [Bright-Chengliang](https://github.com/Bright-Chengliang) · © 202
 
 <p align="center"><img src="docs/screenshots/settings.png" alt="QuickSSH 安全与双语设置" width="48%" /></p>
 
+### 7. 本地终端模式与 Termux 原生引擎
+
+<ins><em>无需联网直接调用手机系统 Shell、Termux 或内置 Linux 环境，全屏 TUI 应用触屏手势丝滑滚动。</em></ins>
+
+**设计动机：** 开发者不仅需要远程运维，也经常需要在本地跑脚本、执行 Git 命令或与本地运行的 AI CLI（如 OpenCode、Codex）交互。传统方案要么在 Termux 与 SSH 工具间频繁切后台，要么在全屏 TUI 中遇到触摸滑动无法上下滚动历史消息的痛点。
+
+**具体实现：** 应用全面集成 Termux 原生终端内核（`TerminalView` & `TerminalEmulator`），提供标准 PTY、全量 DEC 控制序列与真彩 ANSI 渲染。新增“本地终端模式”，自动探测并直连系统 Shell (`/system/bin/sh`)、Termux 环境 (`/data/data/com.termux/files/usr/bin/bash`) 或应用内置的 Linux BusyBox 容器，完全复用多工作区配置与前台守护。针对 Windows ConPTY / SSH 下 TUI 工具缺失鼠标报告的场景，实现智能手势步长换算与 VT PageUp/PageDown 分发，使 OpenCode 等全屏 TUI 消息历史上下滑动获得与 Termux 原生完全一致的顺畅体验。
+
 ## 架构概览
 
 ```mermaid
 flowchart LR
     UI[Jetpack Compose 界面] --> DB[Room 数据库]
     UI --> Services[前台服务]
+    Services --> Termux[Termux 终端引擎]
+    Termux --> Local[本地 Shell / Termux / BusyBox]
     Services --> SSH[SSHJ SSH / SFTP]
     Services --> Tunnel[本地端口转发]
     Credentials[Android Keystore] --> Services
@@ -90,7 +100,7 @@ flowchart LR
     Tunnel --> WebView[本地 WebView]
 ```
 
-项目按职责拆分为：`data/` 负责持久化、DAO 和迁移，`security/` 负责 Keystore 加密，`service/` 负责 SSH/SFTP/隧道生命周期，`ui/screens/` 负责 Compose 工作流；`net/schmizz/sshj/` 只保留针对传输进度的局部补丁，没有另起一套传输实现。
+项目按职责拆分为：`data/` 负责持久化、DAO 和迁移，`security/` 负责 Keystore 加密，`service/` 负责本地 PTY、SSH/SFTP/隧道生命周期及 Termux 桥接，`ui/screens/` 负责 Compose 与 Termux TerminalView 渲染工作流；`net/schmizz/sshj/` 只保留针对传输进度的局部补丁，没有另起一套传输实现。
 
 ## 测试与验证
 
@@ -110,6 +120,7 @@ flowchart LR
 
 - Android：`minSdk 26`，`targetSdk 34`
 - UI：Jetpack Compose + Material 3
+- 终端引擎：Termux Terminal View & Emulator (v0.118.0) + 内嵌多架构 Linux BusyBox PTY
 - 数据库：Room
 - SSH/SFTP：SSHJ + Bouncy Castle
 - 安全：Android Keystore、AndroidX Biometric
@@ -121,9 +132,10 @@ app/src/main/java/com/quickssh/app/
 ├── MainActivity.kt              # 导航、连接编排、传输队列
 ├── data/                        # Room 实体、DAO、数据库迁移、备份编解码
 ├── security/                    # Android Keystore 加密
-├── service/                     # SSH、SFTP、传输和隧道前台服务
-├── ui/screens/                  # 列表、添加/编辑、终端、传输、隧道、设置
+├── service/                     # 本地 PTY、SSH/SFTP、Termux 会话桥接与前台守护
+├── ui/screens/                  # 主机列表、终端 (Compose + TermuxView)、传输、设置
 └── utils/                       # ANSI 渲染、终端缓冲
+app/src/main/jniLibs/            # 内置多架构 BusyBox (arm64, arm, x86, x86_64)
 net/schmizz/sshj/                # 针对 SFTP 进度与传输行为的本地补丁
 scripts/                         # 本地构建与调试辅助脚本
 ```
