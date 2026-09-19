@@ -135,8 +135,7 @@ fun SettingsScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 val context = androidx.compose.ui.platform.LocalContext.current
-                val powerManager = remember { context.getSystemService(android.content.Context.POWER_SERVICE) as? android.os.PowerManager }
-                val isBatteryIgnored = remember(context) { powerManager?.isIgnoringBatteryOptimizations(context.packageName) == true }
+                val isBatteryIgnored = remember(context) { com.quickssh.app.utils.BatteryOptimizationHelper.isIgnored(context) }
 
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
@@ -158,17 +157,7 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.width(16.dp))
                 if (!isBatteryIgnored) {
                     FeedbackButton(onClick = {
-                        try {
-                            val intent = android.content.Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                                data = android.net.Uri.parse("package:${context.packageName}")
-                            }
-                            context.startActivity(intent)
-                        } catch (_: Exception) {
-                            try {
-                                val intent = android.content.Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
-                                context.startActivity(intent)
-                            } catch (_: Exception) {}
-                        }
+                        com.quickssh.app.utils.BatteryOptimizationHelper.requestIgnore(context)
                     }) {
                         Text(language.text("开启保活", "Allow"))
                     }

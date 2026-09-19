@@ -7,8 +7,13 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkRequest
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import com.quickssh.app.MainActivity
 import com.quickssh.app.data.AppDatabase
@@ -65,12 +70,68 @@ data class TunnelServiceState(
 class TunnelForegroundService : Service() {
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val activeTunnels = linkedMapOf<String, TunnelRuntime>()
+    private var connectivityManager: ConnectivityManager? = null
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
+
+    private fun acquireLocks() {
+        try {
+            if (wakeLock == null) {
+                val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
+                wakeLock = powerManager?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "quickssh:tunnel_wake_lock")?.apply {
+                    setReferenceCounted(false)
+                    acquire()
+                }
+            }
+        } catch (_: Exception) {}
+        try {
+            if (wifiLock == null) {
+                val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+                val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+                } else {
+                    @Suppress("DEPRECATION")
+                    WifiManager.WIFI_MODE_FULL_HIGH_PERF
+                }
+                wifiLock = wifiManager?.createWifiLock(mode, "quickssh:tunnel_wifi_lock")?.apply {
+                    setReferenceCounted(false)
+                    acquire()
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun releaseLocks() {
+        try {
+            wakeLock?.let { if (it.isHeld) it.release() }
+            wakeLock = null
+        } catch (_: Exception) {}
+        try {
+            wifiLock?.let { if (it.isHeld) it.release() }
+            wifiLock = null
+        } catch (_: Exception) {}
+    }
+
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            // Network available callback
+        }
+    }
+
+    private fun registerNetworkCallback() {
+        val manager = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
+        connectivityManager = manager
+        runCatching {
+            manager.registerNetworkCallback(NetworkRequest.Builder().build(), networkCallback)
+        }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        registerNetworkCallback()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -94,6 +155,7 @@ class TunnelForegroundService : Service() {
             return
         }
 
+        acquireLocks()
         val job = serviceScope.launch {
             runTunnel(request)
         }
@@ -127,7 +189,9 @@ class TunnelForegroundService : Service() {
                             request.reconnectingState(config, lastKnownLocalPort, reconnectAttempt)
                         }
                     )
-                    client = SSHClient().apply {
+                    client = RobustSSHClient().apply {
+                        connectTimeout = CONNECT_TIMEOUT_MS
+                        timeout = 0
                         addHostKeyVerifier(KnownHostsVerifier(applicationContext))
                         connect(config.host, config.port)
                         connection.keepAlive.keepAliveInterval = KEEPALIVE_INTERVAL_SECONDS
@@ -219,6 +283,7 @@ class TunnelForegroundService : Service() {
     }
 
     private fun stopAllTunnels() {
+        releaseLocks()
         activeTunnels.keys.toList().forEach(::stopTunnel)
         stopForegroundCompat(removeNotification = true)
         stopSelf()
@@ -231,6 +296,7 @@ class TunnelForegroundService : Service() {
         }
         publishAll()
         if (activeTunnels.isEmpty()) {
+            releaseLocks()
             stopForegroundCompat(removeNotification = false)
             stopSelf()
         }
@@ -346,6 +412,8 @@ class TunnelForegroundService : Service() {
     }
 
     override fun onDestroy() {
+        releaseLocks()
+        runCatching { connectivityManager?.unregisterNetworkCallback(networkCallback) }
         activeTunnels.values.forEach { runtime ->
             runtime.job?.cancel()
             runCatching { runtime.forwarder?.close() }
@@ -452,7 +520,8 @@ class TunnelForegroundService : Service() {
     companion object {
         private const val CHANNEL_ID = "QuickSshTunnelForegroundChannel"
         private const val NOTIFICATION_ID = 4044
-        private const val KEEPALIVE_INTERVAL_SECONDS = 20
+        private const val KEEPALIVE_INTERVAL_SECONDS = 15
+        private const val CONNECT_TIMEOUT_MS = 15_000
         const val LOOPBACK_HOST = "127.0.0.1"
         const val MAX_PORT = 65535
         private const val ACTION_START_TUNNEL = "com.quickssh.app.action.START_TUNNEL"

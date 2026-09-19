@@ -69,8 +69,13 @@ class SshForegroundService : Service() {
         try {
             if (wifiLock == null) {
                 val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
-                @Suppress("DEPRECATION")
-                wifiLock = wifiManager?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "quickssh:session_wifi_lock")?.apply {
+                val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+                } else {
+                    @Suppress("DEPRECATION")
+                    WifiManager.WIFI_MODE_FULL_HIGH_PERF
+                }
+                wifiLock = wifiManager?.createWifiLock(mode, "quickssh:session_wifi_lock")?.apply {
                     setReferenceCounted(false)
                     acquire()
                 }
