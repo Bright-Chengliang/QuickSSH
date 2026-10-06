@@ -45,7 +45,8 @@ class SshClientHelper(
     override val sessionId: String = "ssh-${config.id}-${System.currentTimeMillis()}"
 ) : TerminalSessionClient {
     companion object {
-        private const val KEEPALIVE_INTERVAL_SECONDS = 20
+        internal const val KEEPALIVE_INTERVAL_SECONDS = 15
+        private const val CONNECT_TIMEOUT_MS = 15_000
         private const val SHELL_STARTUP_COMMAND_DELAY_MS = 600L
         private const val PERSISTENT_SESSION_ATTACH_DELAY_MS = 400L
         private const val PERSISTENT_SESSION_DETECT_TIMEOUT_SECONDS = 5L
@@ -88,6 +89,9 @@ class SshClientHelper(
 
     @Volatile
     private var userRequestedDisconnect = false
+
+    @Volatile
+    private var userTriggeredShellExit = false
 
     @Volatile
     private var reconnectAttempt = 0
@@ -139,7 +143,9 @@ class SshClientHelper(
             emitLog(if (reconnectAttempt == 0) "[QuickSSH] Connecting..." else "\n[QuickSSH] Reconnecting background SSH session...")
             closeCurrentConnection()
 
-            sshClient = SSHClient().apply {
+            sshClient = RobustSSHClient().apply {
+                connectTimeout = CONNECT_TIMEOUT_MS
+                timeout = 0
                 addHostKeyVerifier(KnownHostsVerifier(appContext))
                 connect(config.host, config.port)
                 connection.keepAlive.keepAliveInterval = KEEPALIVE_INTERVAL_SECONDS
@@ -169,6 +175,7 @@ class SshClientHelper(
                 outputStream = shell?.outputStream
                 isConnected = true
                 reconnectAttempt = 0
+                userTriggeredShellExit = false
                 updateStatus(SshSessionStatus.CONNECTED, "Connected to ${config.host}:${config.port}")
 
                 val activeShell = shell
@@ -184,8 +191,17 @@ class SshClientHelper(
                             lastRemoteOutputAtMillis = System.currentTimeMillis()
                         },
                         onSessionFinished = {
-                            if (!userRequestedDisconnect) {
-                                closeCurrentConnection()
+                            scope.launch(Dispatchers.IO) {
+                                if (userRequestedDisconnect) return@launch
+                                if (userTriggeredShellExit) {
+                                    userRequestedDisconnect = true
+                                    emitLog("\n[QuickSSH] Shell session exited.")
+                                    closeCurrentConnection()
+                                    updateStatus(SshSessionStatus.DISCONNECTED, "Disconnected")
+                                } else {
+                                    emitLog("\n[QuickSSH Info] Remote connection lost, scheduling auto-reconnect...")
+                                    scheduleReconnect(java.io.IOException("Remote terminal connection stream ended"))
+                                }
                             }
                         }
                     )
@@ -233,16 +249,26 @@ class SshClientHelper(
                 userRequestedDisconnect = true
                 closeCurrentConnection()
             }
-        } catch (e: net.schmizz.sshj.transport.TransportException) {
-            updateStatus(SshSessionStatus.FAILED, "SSH transport failed: ${e.localizedMessage ?: e.javaClass.simpleName}")
-            emitLog("[QuickSSH Error] SSH transport failed: ${e.localizedMessage ?: e.javaClass.simpleName}")
-            userRequestedDisconnect = true
-            closeCurrentConnection()
         } catch (e: UserAuthException) {
             updateStatus(SshSessionStatus.FAILED, "Authentication failed")
             emitLog("[QuickSSH Error] SSH authentication failed: ${e.localizedMessage ?: e.javaClass.simpleName}")
             userRequestedDisconnect = true
             closeCurrentConnection()
+        } catch (e: net.schmizz.sshj.transport.TransportException) {
+            val isAuthOrHostKeyError = e.disconnectReason == net.schmizz.sshj.common.DisconnectReason.HOST_KEY_NOT_VERIFIABLE ||
+                e.disconnectReason == net.schmizz.sshj.common.DisconnectReason.NO_MORE_AUTH_METHODS_AVAILABLE ||
+                e.disconnectReason == net.schmizz.sshj.common.DisconnectReason.ILLEGAL_USER_NAME
+            if (isAuthOrHostKeyError) {
+                updateStatus(SshSessionStatus.FAILED, "SSH transport failed: ${e.localizedMessage ?: e.javaClass.simpleName}")
+                emitLog("[QuickSSH Error] SSH transport rejected: ${e.localizedMessage ?: e.javaClass.simpleName}")
+                userRequestedDisconnect = true
+                closeCurrentConnection()
+            } else if (!userRequestedDisconnect) {
+                emitLog("\n[QuickSSH Info] SSH transport interrupted (${e.localizedMessage ?: e.javaClass.simpleName}), scheduling reconnect...")
+                scheduleReconnect(e)
+            } else {
+                closeCurrentConnection()
+            }
         } catch (e: Exception) {
             if (!userRequestedDisconnect) scheduleReconnect(e)
         }
@@ -410,6 +436,12 @@ class SshClientHelper(
     }
 
     override fun sendLine(line: String) {
+        val trimmed = line.trim()
+        if (trimmed == "exit" || trimmed == "logout") {
+            userTriggeredShellExit = true
+        } else if (trimmed.isNotBlank()) {
+            userTriggeredShellExit = false
+        }
         _termuxSessionState.value?.write(terminalLinePayload(line)) ?: sendCommand(terminalLinePayload(line))
     }
 
@@ -501,6 +533,9 @@ class SshClientHelper(
 
     override fun sendRawInput(data: String) {
         if (data.isEmpty()) return
+        if (data == "exit\r" || data == "exit\n" || data == "logout\r" || data == "logout\n") {
+            userTriggeredShellExit = true
+        }
         _termuxSessionState.value?.let {
             it.write(data)
             return
@@ -543,6 +578,7 @@ class SshClientHelper(
         closeCurrentConnection()
         if (userRequestedDisconnect) return
         reconnectAttempt++
+
         updateStatus(SshSessionStatus.RECONNECTING, "Reconnecting after ${cause.localizedMessage ?: cause.javaClass.simpleName}")
         val delayMillis = reconnectDelayMillis(reconnectAttempt)
         emitLog("\n[QuickSSH] Session retained. Reconnect attempt $reconnectAttempt in ${delayMillis / 1000}s.")
@@ -955,5 +991,20 @@ internal fun persistentScreenCommand(sessionName: String, workDirectory: String?
         "cd ${shellPathLiteral(workDirectory)} && screen -dRR $safeName"
     } else {
         "screen -dRR $safeName"
+    }
+}
+
+/**
+ * Enhanced SSHClient that enables OS-level TCP KeepAlive, low-delay traffic class,
+ * and TCP_NODELAY on the underlying socket for superior background stability.
+ */
+open class RobustSSHClient : SSHClient() {
+    override fun onConnect() {
+        super.onConnect()
+        try {
+            socket?.keepAlive = true
+            socket?.tcpNoDelay = true
+            socket?.trafficClass = 0x10 // IPTOS_LOWDELAY
+        } catch (_: Throwable) {}
     }
 }

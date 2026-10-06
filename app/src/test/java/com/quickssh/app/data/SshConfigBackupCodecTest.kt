@@ -71,6 +71,25 @@ class SshConfigBackupCodecTest {
     }
 
     @Test
+    fun backupRoundTripPreservesPreConnectTunnelPresetName() {
+        val record = backupRecord().copy(preConnectTunnelPresetName = "New API")
+        val decoded = SshConfigBackupCodec.decode(SshConfigBackupCodec.encode(listOf(record)))
+
+        assertEquals("New API", decoded.first().preConnectTunnelPresetName)
+    }
+
+    @Test
+    fun encryptedBackupRoundTripPreservesPreConnectTunnelPresetName() {
+        val record = backupRecord().copy(preConnectTunnelPresetName = "New API")
+        val decoded = SshConfigBackupCodec.decode(
+            json = SshConfigBackupCodec.encode(listOf(record), password = "test-pass"),
+            password = "test-pass"
+        )
+
+        assertEquals("New API", decoded.single().preConnectTunnelPresetName)
+    }
+
+    @Test
     fun backupDecodeHandlesLocalOrZeroPortGracefullyWithoutThrowing() {
         val json = """
             {

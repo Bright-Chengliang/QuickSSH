@@ -5,10 +5,12 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -32,6 +34,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -39,6 +42,7 @@ import androidx.compose.ui.unit.sp
 import com.quickssh.app.service.SshSessionInfo
 import com.quickssh.app.service.SshSessionStatus
 import com.quickssh.app.service.displayText
+import com.quickssh.app.utils.BatteryOptimizationHelper
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -52,6 +56,8 @@ fun ActiveSessionsScreen(
     onDisconnectSession: (String) -> Unit
 ) {
     val language = LocalQuickSshLanguage.current
+    val context = LocalContext.current
+    val isBatteryIgnored = remember(context) { BatteryOptimizationHelper.isIgnored(context) }
     var editingSession by remember { mutableStateOf<SshSessionInfo?>(null) }
     var editingName by remember { mutableStateOf("") }
 
@@ -93,6 +99,46 @@ fun ActiveSessionsScreen(
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+                if (!isBatteryIgnored) {
+                    item(key = "battery_keepalive_tip") {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                            ),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = language.text("建议开启后台保活", "Enable Background Keepalive"),
+                                        style = MaterialTheme.typography.titleSmall,
+                                        color = MaterialTheme.colorScheme.onBackground
+                                    )
+                                    Text(
+                                        text = language.text(
+                                            "忽略电池优化可防止锁屏或切换应用时 SSH 连接通道被系统杀死。",
+                                            "Ignoring battery optimization prevents Android from terminating SSH sessions in background."
+                                        ),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                FeedbackButton(onClick = {
+                                    BatteryOptimizationHelper.requestIgnore(context)
+                                }) {
+                                    Text(language.text("开启", "Allow"))
+                                }
+                            }
+                        }
+                    }
+                }
                 items(sessions, key = { it.sessionId }) { session ->
                     ActiveSessionCard(
                         session = session,

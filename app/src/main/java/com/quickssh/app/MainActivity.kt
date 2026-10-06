@@ -87,6 +87,8 @@ import com.quickssh.app.service.TransferForegroundService
 import com.quickssh.app.service.TunnelForegroundService
 import com.quickssh.app.service.TunnelStatus
 import com.quickssh.app.service.terminalQuickUploadDirectory
+import com.quickssh.app.service.AgentBridgeService
+import com.quickssh.app.service.AgentBridgeState
 import com.quickssh.app.ui.screens.ActiveSessionsScreen
 import com.quickssh.app.ui.screens.AppLanguage
 import com.quickssh.app.ui.screens.EditServerDialog
@@ -555,6 +557,9 @@ class MainActivity : FragmentActivity() {
         var autoWrapEnabled by remember {
             mutableStateOf(settings.getBoolean(KEY_TERMINAL_AUTO_WRAP, true))
         }
+        var terminalRunProfileEnabled by remember {
+            mutableStateOf(settings.getBoolean(KEY_TERMINAL_RUN_PROFILE, true))
+        }
         var privacyModeEnabled by remember {
             mutableStateOf(settings.getBoolean(KEY_PRIVACY_MODE, false))
         }
@@ -563,6 +568,28 @@ class MainActivity : FragmentActivity() {
         }
         var strictHostKeyVerificationEnabled by remember {
             mutableStateOf(settings.getBoolean(KnownHostsVerifier.KEY_STRICT_HOST_KEY_VERIFICATION, false))
+        }
+        var agentBridgeEnabled by remember {
+            mutableStateOf(settings.getBoolean(KEY_AGENT_BRIDGE_ENABLED, false))
+        }
+        var agentBridgePort by remember {
+            mutableStateOf(settings.getInt(KEY_AGENT_BRIDGE_PORT, AgentBridgeService.DEFAULT_BRIDGE_PORT))
+        }
+        var termuxSshPort by remember {
+            mutableStateOf(settings.getInt(KEY_TERMUX_SSH_PORT, AgentBridgeService.DEFAULT_TERMUX_SSH_PORT))
+        }
+        val agentBridgeState by AgentBridgeService.bridgeState.collectAsState()
+
+        androidx.compose.runtime.LaunchedEffect(agentBridgeEnabled, agentBridgePort, termuxSshPort) {
+            if (agentBridgeEnabled) {
+                AgentBridgeService.start(
+                    context = applicationContext,
+                    bridgePort = agentBridgePort,
+                    termuxSshPort = termuxSshPort
+                )
+            } else {
+                AgentBridgeService.stop()
+            }
         }
         var downloadDirectoryUriText by remember {
             mutableStateOf(settings.getString(KEY_DOWNLOAD_DIRECTORY_URI, "").orEmpty())
@@ -1726,6 +1753,7 @@ class MainActivity : FragmentActivity() {
                                 lastTerminalSessionId = sessionId
                                 connectingConfig = config
                                 showConnectingDialog = true
+                                ensurePreConnectTunnelReady(config)
                                 startSshService(sessionId, config)
                                 attachSessionCollector(sessionId, state, openTerminalOnFirstOutput = true)
                             }
@@ -1736,6 +1764,21 @@ class MainActivity : FragmentActivity() {
                             db.sshConfigDao().deleteConfig(config)
                             Toast.makeText(this@MainActivity, "Configuration removed from database", Toast.LENGTH_SHORT).show()
                         }
+                    },
+                    onImportDiscoveredHost = { discoveredHost ->
+                        configToEdit = SshConfig(
+                            id = 0,
+                            name = discoveredHost.alias.ifBlank { "Termux Remote" },
+                            host = discoveredHost.hostname,
+                            port = discoveredHost.port,
+                            username = discoveredHost.username ?: "termux",
+                            authType = AUTH_TYPE_PASSWORD,
+                            serverDisplayName = discoveredHost.alias
+                        )
+                        isCopyMode = false
+                        decryptedPassword = null
+                        connectionTestStatus = ""
+                        currentScreen = "ADD"
                     }
                 )
 
@@ -1843,6 +1886,10 @@ class MainActivity : FragmentActivity() {
                     downloadDirectoryLabel = downloadDirectoryLabel(downloadDirectoryUriText),
                     serverProfileCount = configs.size,
                     backupStatusText = configBackupStatus,
+                    agentBridgeEnabled = agentBridgeEnabled,
+                    agentBridgePort = agentBridgePort,
+                    termuxSshPort = termuxSshPort,
+                    agentBridgeState = agentBridgeState,
                     bottomBar = {
                         QuickSshBottomBar(
                             selectedTab = "SETTINGS",
@@ -1858,6 +1905,11 @@ class MainActivity : FragmentActivity() {
                     onAutoWrapChange = { enabled ->
                         autoWrapEnabled = enabled
                         settings.edit().putBoolean(KEY_TERMINAL_AUTO_WRAP, enabled).apply()
+                    },
+                    terminalRunProfileEnabled = terminalRunProfileEnabled,
+                    onTerminalRunProfileChange = { enabled ->
+                        terminalRunProfileEnabled = enabled
+                        settings.edit().putBoolean(KEY_TERMINAL_RUN_PROFILE, enabled).apply()
                     },
                     onPrivacyModeChange = { enabled ->
                         privacyModeEnabled = enabled
@@ -1910,6 +1962,18 @@ class MainActivity : FragmentActivity() {
                     onLanguageChange = { language ->
                         uiLanguage = language
                         settings.edit().putString(KEY_LANGUAGE, language.code).apply()
+                    },
+                    onAgentBridgeEnabledChange = { enabled ->
+                        agentBridgeEnabled = enabled
+                        settings.edit().putBoolean(KEY_AGENT_BRIDGE_ENABLED, enabled).apply()
+                    },
+                    onAgentBridgePortChange = { port ->
+                        agentBridgePort = port
+                        settings.edit().putInt(KEY_AGENT_BRIDGE_PORT, port).apply()
+                    },
+                    onTermuxSshPortChange = { port ->
+                        termuxSshPort = port
+                        settings.edit().putInt(KEY_TERMUX_SSH_PORT, port).apply()
                     }
                 )
             }
@@ -2369,6 +2433,7 @@ class MainActivity : FragmentActivity() {
                     configToEdit = configToEdit,
                     isCopyMode = isCopyMode,
                     decryptedPassword = decryptedPassword,
+                    availableTunnelPresets = tunnelPresets,
                     connectionTestStatus = connectionTestStatus,
                     isTestingConnection = isTestingConnection,
                     onBackClicked = {
@@ -2426,7 +2491,7 @@ class MainActivity : FragmentActivity() {
                             isTestingConnection = false
                         }
                     },
-                    onSaveClicked = { sName, sHost, sPort, sUser, sAuthType, sPass, sPrivateKey, sWorkDir, sPostCommand, sFontSize, sWrapEnabled, sTerm, sShortcuts, sPersistentSession, sServerDisplayName ->
+                    onSaveClicked = { sName, sHost, sPort, sUser, sAuthType, sPass, sPrivateKey, sWorkDir, sPostCommand, sFontSize, sWrapEnabled, sTerm, sShortcuts, sPersistentSession, sServerDisplayName, sPreConnectTunnelPresetId ->
                         scope.launch {
                             val existingEncryptedPassword = configToEdit?.encryptedPassword
                             val existingEncryptedPrivateKey = configToEdit?.encryptedPrivateKey
@@ -2464,6 +2529,7 @@ class MainActivity : FragmentActivity() {
                                     terminalTerm = sTerm,
                                     terminalShortcuts = if (sShortcuts.isNotBlank()) sShortcuts else null,
                                     persistentSessionMode = sPersistentSession,
+                                    preConnectTunnelPresetId = sPreConnectTunnelPresetId,
                                     serverNodeId = configToEdit?.serverNodeId ?: 0L,
                                     serverDisplayName = if (sServerDisplayName.isNotBlank()) sServerDisplayName else null,
                                     isLocalSession = (sAuthType == AUTH_TYPE_LOCAL)
@@ -2492,6 +2558,7 @@ class MainActivity : FragmentActivity() {
                                     terminalTerm = sTerm,
                                     terminalShortcuts = if (sShortcuts.isNotBlank()) sShortcuts else null,
                                     persistentSessionMode = sPersistentSession,
+                                    preConnectTunnelPresetId = sPreConnectTunnelPresetId,
                                     updateTime = updatedAt,
                                     serverDisplayName = if (sServerDisplayName.isNotBlank()) sServerDisplayName else originalConfig.serverDisplayName,
                                     isLocalSession = (sAuthType == AUTH_TYPE_LOCAL)
@@ -3077,6 +3144,9 @@ class MainActivity : FragmentActivity() {
         val records = db.sshConfigDao().getAllConfigs()
             .filterNot { it.isLocalSession || it.authType == "LOCAL" }
             .map { config ->
+            val preConnectPresetName = config.preConnectTunnelPresetId?.let { id ->
+                tunnelPresetsByWorkspace[config.id]?.firstOrNull { it.id == id }?.name
+            }
             SshConfigBackupRecord(
                 name = config.name,
                 host = config.host,
@@ -3092,6 +3162,7 @@ class MainActivity : FragmentActivity() {
                 terminalTerm = config.terminalTerm,
                 terminalShortcuts = config.terminalShortcuts,
                 persistentSessionMode = config.persistentSessionMode,
+                preConnectTunnelPresetName = preConnectPresetName,
                 serverDisplayName = config.serverDisplayName,
                 tunnelPresets = tunnelPresetsByWorkspace[config.id].orEmpty().map { preset ->
                     preset.toBackupRecord()
@@ -3132,8 +3203,21 @@ class MainActivity : FragmentActivity() {
                 dao.getConfigById(importedConfig.id) ?: importedConfig
             }
             upsertImportedTunnelPresets(savedConfig.id, record.tunnelPresets)
-            existingByKey[key] = savedConfig
-            importedConfigs.add(savedConfig)
+            val finalConfig = if (!record.preConnectTunnelPresetName.isNullOrBlank()) {
+                val matched = dao.getTunnelPresetsForWorkspace(savedConfig.id)
+                    .firstOrNull { it.name.equals(record.preConnectTunnelPresetName, ignoreCase = true) }
+                if (matched != null && savedConfig.preConnectTunnelPresetId != matched.id) {
+                    val updated = savedConfig.copy(preConnectTunnelPresetId = matched.id)
+                    dao.updateConfig(updated)
+                    dao.getConfigById(updated.id) ?: updated
+                } else {
+                    savedConfig
+                }
+            } else {
+                savedConfig
+            }
+            existingByKey[key] = finalConfig
+            importedConfigs.add(finalConfig)
         }
         restoreImportedConfigOrder(importedConfigs)
         records.size
@@ -3331,6 +3415,32 @@ class MainActivity : FragmentActivity() {
         }.getOrDefault("Download directory set")
     }
 
+    private suspend fun ensurePreConnectTunnelReady(config: SshConfig) {
+        val presetId = config.preConnectTunnelPresetId ?: return
+        val preset = withContext(Dispatchers.IO) {
+            db.sshConfigDao().getTunnelPresetById(presetId)
+        } ?: return
+
+        val active = TunnelForegroundService.findActiveTunnelForPreset(preset)
+        val targetLocalPort = if (preset.localPort > 0) preset.localPort else active?.localPort ?: preset.remotePort
+
+        if (active != null && active.status == TunnelStatus.RUNNING) {
+            return
+        }
+
+        if (active == null) {
+            TunnelForegroundService.startTunnel(
+                context = this@MainActivity,
+                configId = preset.workspaceId,
+                remoteHost = preset.remoteHost,
+                remotePort = preset.remotePort,
+                localPort = preset.localPort
+            )
+        }
+
+        TunnelForegroundService.awaitLocalPort(targetLocalPort, timeoutMs = 8_000L)
+    }
+
     private fun startSshService(sessionId: String, config: SshConfig) {
         val serviceIntent = Intent(this, SshForegroundService::class.java).apply {
             action = SshForegroundService.ACTION_START_SSH
@@ -3414,11 +3524,19 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= TRIM_MEMORY_UI_HIDDEN) {
+            System.gc()
+        }
+    }
+
     override fun onDestroy() {
         if (isBound) {
             unbindService(serviceConnection)
             isBound = false
         }
+        AgentBridgeService.stop()
         super.onDestroy()
     }
 
@@ -3434,8 +3552,12 @@ class MainActivity : FragmentActivity() {
         const val PREFS_NAME = "quickssh_settings"
         const val KEY_LANGUAGE = "ui_language"
         const val KEY_TERMINAL_AUTO_WRAP = "terminal_auto_wrap"
+        const val KEY_TERMINAL_RUN_PROFILE = "terminal_run_profile"
         const val KEY_PRIVACY_MODE = "privacy_mode"
         const val KEY_BIOMETRIC_UNLOCK = "biometric_unlock"
+        const val KEY_AGENT_BRIDGE_ENABLED = "agent_bridge_enabled"
+        const val KEY_AGENT_BRIDGE_PORT = "agent_bridge_port"
+        const val KEY_TERMUX_SSH_PORT = "termux_ssh_port"
         const val KEY_DOWNLOAD_DIRECTORY_URI = "download_directory_uri"
         const val KEY_TRANSFER_DOWNLOAD_CONFIG_ID = "transfer_download_config_id"
         const val KEY_TRANSFER_DOWNLOAD_REMOTE_PATH = "transfer_download_remote_path"

@@ -83,6 +83,18 @@ Mobile terminal tools often force a choice between a standalone local terminal (
 
 **Implementation:** QuickSSH integrates Termux's native terminal core (`TerminalView` & `TerminalEmulator`), offering a standard PTY, full DEC control sequence support, and true-color ANSI rendering. The new Local Terminal Mode automatically detects and attaches to the system shell (`/system/bin/sh`), Termux environment (`/data/data/com.termux/files/usr/bin/bash`), or an embedded multi-arch Linux BusyBox container, fully sharing workspace profiles and foreground service persistence. For Windows ConPTY / SSH environments where mouse reporting is absent, QuickSSH translates vertical swipe gestures into VT PageUp/PageDown sequences, restoring smooth, native-like scrolling across chat histories in OpenCode and other TUI tools.
 
+### Built-in OpenCode AI Agent, startup Profile, and Termux Agent Bridge
+
+<ins><em>Bundled opencode launcher and auto-sourcing startup profile, bridging Termux and QuickSSH for AI agent execution and host discovery.</em></ins>
+
+**Motivation:** Mobile developers want their shell ready-to-use upon launch with standard environment variables, colors, and aliases, while enabling AI agents running in Termux to easily interact with QuickSSH-managed servers and local terminals.
+
+**Implementation:**
+- **Built-in `opencode` Launcher**: The local sandbox environment bundles an `opencode` launcher script and `ai` alias, linking with global Termux / Node.js runtimes and QuickSSH Agent Gateway out of the box.
+- **Auto-run Startup Profile**: Configurable via Settings ("Run Profile on Local Terminal Startup", enabled by default). Automatically creates and sources `~/.quickssh_profile` (or `~/.profile`), setting up `PATH`, `TERM=xterm-256color`, truecolor support, and productivity aliases (`ll`, `la`, `cls`, `ai`).
+- **Termux & QuickSSH Agent Bridge (`AgentBridgeService`)**: Provides a lightweight local loopback REST API on `127.0.0.1:22022` with a one-click Termux setup script (`curl -s http://127.0.0.1:22022/install.sh | bash`), allowing Termux to query server configs, discover hosts, and execute terminal commands.
+- **SSH Devices & Hostname Overview**: Automatically aggregates hosts from the QuickSSH database, Termux `~/.ssh/config`, and `~/.ssh/known_hosts`, with instant search, copy host/command, and direct import.
+
 ## Architecture
 
 ```mermaid

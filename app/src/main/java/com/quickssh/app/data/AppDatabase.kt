@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [SshServerNode::class, SshWorkspaceProfile::class, SshTunnelPreset::class, TransferHistoryEntry::class], version = 10, exportSchema = false)
+@Database(entities = [SshServerNode::class, SshWorkspaceProfile::class, SshTunnelPreset::class, TransferHistoryEntry::class], version = 11, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun sshConfigDao(): SshConfigDao
     abstract fun transferHistoryDao(): TransferHistoryDao
@@ -70,6 +70,12 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                addPreConnectTunnelPresetIdColumn(db)
+            }
+        }
+
         internal fun migrations(): Array<Migration> {
             return arrayOf(
                 MIGRATION_1_2,
@@ -80,7 +86,8 @@ abstract class AppDatabase : RoomDatabase() {
                 MIGRATION_6_7,
                 MIGRATION_7_8,
                 MIGRATION_8_9,
-                MIGRATION_9_10
+                MIGRATION_9_10,
+                MIGRATION_10_11
             )
         }
 
@@ -288,6 +295,14 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private fun addPreConnectTunnelPresetIdColumn(database: SupportSQLiteDatabase) {
+            createSshWorkspacesTable(database)
+            val columns = columnNames(database, "ssh_workspaces")
+            if ("preConnectTunnelPresetId" !in columns) {
+                database.execSQL("ALTER TABLE ssh_workspaces ADD COLUMN preConnectTunnelPresetId INTEGER DEFAULT NULL")
+            }
+        }
+
         private fun normalizeSshSortOrderColumns(database: SupportSQLiteDatabase) {
             createSshServerNodesTable(database)
             createSshWorkspacesTable(database)
@@ -455,6 +470,7 @@ abstract class AppDatabase : RoomDatabase() {
                     terminalTerm TEXT NOT NULL,
                     terminalShortcuts TEXT,
                     persistentSessionMode TEXT NOT NULL DEFAULT 'none',
+                    preConnectTunnelPresetId INTEGER,
                     sortOrder INTEGER NOT NULL DEFAULT 0,
                     updateTime INTEGER NOT NULL,
                     FOREIGN KEY(serverNodeId) REFERENCES ssh_server_nodes(id) ON UPDATE NO ACTION ON DELETE CASCADE

@@ -22,6 +22,7 @@ data class SshConfig(
     val terminalTerm: String = "xterm-256color",
     val terminalShortcuts: String? = null,
     val persistentSessionMode: String = PERSISTENT_SESSION_NONE, // "none", "tmux", "screen", "auto"
+    val preConnectTunnelPresetId: Long? = null,
     val updateTime: Long = System.currentTimeMillis(),
     val serverNodeId: Long = 0,
     val serverSortOrder: Int = 0,
@@ -83,6 +84,7 @@ data class SshWorkspaceProfile(
     val terminalTerm: String = "xterm-256color",
     val terminalShortcuts: String? = null,
     @ColumnInfo(defaultValue = "none") val persistentSessionMode: String = PERSISTENT_SESSION_NONE,
+    @ColumnInfo(defaultValue = "NULL") val preConnectTunnelPresetId: Long? = null,
     @ColumnInfo(defaultValue = "0") val sortOrder: Int = 0,
     val updateTime: Long = System.currentTimeMillis()
 )

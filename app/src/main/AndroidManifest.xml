@@ -18,6 +18,12 @@
     <!-- APK downloads are handed off to the system package installer. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+    <!-- 包可见性：允许检测并唤起本机 Termux（可选增强）。未安装 Termux 时
+         不影响任何功能，本地终端由内置 BusyBox/系统 Shell 兜底。 -->
+    <queries>
+        <package android:name="com.termux" />
+    </queries>
+
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"

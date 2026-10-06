@@ -29,6 +29,9 @@ interface SshConfigDao {
     @Query("SELECT * FROM ssh_tunnel_presets WHERE workspaceId = :workspaceId ORDER BY updateTime DESC, id DESC")
     suspend fun getTunnelPresetsForWorkspace(workspaceId: Long): List<SshTunnelPreset>
 
+    @Query("SELECT * FROM ssh_tunnel_presets WHERE id = :id LIMIT 1")
+    suspend fun getTunnelPresetById(id: Long): SshTunnelPreset?
+
     @Query(
         """
         SELECT * FROM ssh_tunnel_presets
@@ -289,6 +292,7 @@ interface SshConfigDao {
             terminalTerm = terminalTerm.trim().ifBlank { "xterm-256color" },
             terminalShortcuts = terminalShortcuts?.trim()?.takeIf { it.isNotEmpty() },
             persistentSessionMode = persistentSessionMode.trim().ifBlank { PERSISTENT_SESSION_NONE },
+            preConnectTunnelPresetId = preConnectTunnelPresetId,
             sortOrder = sortOrder,
             updateTime = updateTime
         )
@@ -317,6 +321,7 @@ interface SshConfigDao {
                 w.terminalTerm AS terminalTerm,
                 w.terminalShortcuts AS terminalShortcuts,
                 w.persistentSessionMode AS persistentSessionMode,
+                w.preConnectTunnelPresetId AS preConnectTunnelPresetId,
                 w.updateTime AS updateTime,
                 s.id AS serverNodeId,
                 s.sortOrder AS serverSortOrder,

@@ -72,14 +72,14 @@ class TermuxSessionManager(
     }
 
     /**
-     * Creates an SSH bridged Termux TerminalSession.
-     * Connects remote SSH InputStream and OutputStream directly to Termux's
-     * TerminalEmulator ByteQueues in memory without external subprocesses or loops.
-     * Works reliably on all Android versions and devices.
+     * Creates an in-memory bridged Termux TerminalSession for arbitrary Input/Output streams
+     * (such as SSH connection streams or local ProcessBuilder stdin/stdout streams).
+     * Connects streams directly to Termux's TerminalEmulator in memory, ensuring full 2D screen
+     * emulation, truecolor, cursor addressing, and alternate screen buffer.
      */
-    suspend fun createSshSession(
-        sshInputStream: InputStream,
-        sshOutputStream: OutputStream,
+    suspend fun createStreamSession(
+        inputStream: InputStream,
+        outputStream: OutputStream,
         initialCols: Int = 80,
         initialRows: Int = 24,
         terminalTerm: String = "xterm-256color",
@@ -94,7 +94,7 @@ class TermuxSessionManager(
                 }
 
                 override fun onSessionFinished(finishedSession: TerminalSession) {
-                    Log.d(TAG, "SSH terminal session finished: exit=${finishedSession.exitStatus}")
+                    Log.d(TAG, "Stream terminal session finished: exit=${finishedSession.exitStatus}")
                     onSessionFinished?.invoke()
                 }
             }
@@ -157,25 +157,21 @@ class TermuxSessionManager(
                 .apply { isAccessible = true }
                 .get(session) as Handler
 
-            // Background reader: SSH network input -> Termux ByteQueue -> TerminalEmulator
+            // Background reader: stream input -> Termux ByteQueue -> TerminalEmulator
             val inJob = scope.launch(Dispatchers.IO) {
                 val buffer = ByteArray(4096)
                 try {
                     while (isActive) {
-                        val count = sshInputStream.read(buffer)
+                        val count = inputStream.read(buffer)
                         if (count <= 0) break
                         onDataReceived?.invoke()
-                        val rawStr = String(buffer, 0, count)
-                        if (rawStr.contains("100") || rawStr.contains("\u001B[")) {
-                            Log.d("QuickSSH_TUI", "SSH IN (len=$count): ${rawStr.replace("\u001B", "\\e")}")
-                        }
                         DecSetFilter.rewrite(buffer, 0, count)
                         processToTerminalQueue.write(buffer, 0, count)
                         // MSG_NEW_INPUT (1) informs MainThreadHandler to append to emulator & notify view
                         mainThreadHandler.sendEmptyMessage(1)
                     }
                 } catch (e: Exception) {
-                    Log.d(TAG, "SSH bridge input reader ended: ${e.message}")
+                    Log.d(TAG, "Stream bridge input reader ended: ${e.message}")
                 } finally {
                     withContext(Dispatchers.Main) {
                         try {
@@ -189,20 +185,18 @@ class TermuxSessionManager(
                 }
             }
 
-            // Background writer: Termux keystrokes ByteQueue -> SSH network output
+            // Background writer: Termux keystrokes ByteQueue -> stream output
             val outJob = scope.launch(Dispatchers.IO) {
                 val buffer = ByteArray(4096)
                 try {
                     while (isActive) {
                         val count = terminalToProcessQueue.read(buffer, true)
                         if (count <= 0) break
-                        val outStr = String(buffer, 0, count)
-                        Log.d("QuickSSH_TUI", "SSH OUT (len=$count): ${outStr.replace("\u001B", "\\e")}")
-                        sshOutputStream.write(buffer, 0, count)
-                        sshOutputStream.flush()
+                        outputStream.write(buffer, 0, count)
+                        outputStream.flush()
                     }
                 } catch (e: Exception) {
-                    Log.d(TAG, "SSH bridge output writer ended: ${e.message}")
+                    Log.d(TAG, "Stream bridge output writer ended: ${e.message}")
                 }
             }
 
@@ -222,9 +216,34 @@ class TermuxSessionManager(
                 }
             )
         } catch (e: Throwable) {
-            Log.e(TAG, "createSshSession failed: ${e.message}", e)
+            Log.e(TAG, "createStreamSession failed: ${e.message}", e)
             null
         }
+    }
+
+    /**
+     * Creates an SSH bridged Termux TerminalSession.
+     */
+    suspend fun createSshSession(
+        sshInputStream: InputStream,
+        sshOutputStream: OutputStream,
+        initialCols: Int = 80,
+        initialRows: Int = 24,
+        terminalTerm: String = "xterm-256color",
+        onTitleChanged: ((String) -> Unit)? = null,
+        onDataReceived: (() -> Unit)? = null,
+        onSessionFinished: (() -> Unit)? = null
+    ): SshSessionBridgeResult? {
+        return createStreamSession(
+            inputStream = sshInputStream,
+            outputStream = sshOutputStream,
+            initialCols = initialCols,
+            initialRows = initialRows,
+            terminalTerm = terminalTerm,
+            onTitleChanged = onTitleChanged,
+            onDataReceived = onDataReceived,
+            onSessionFinished = onSessionFinished
+        )
     }
 }
 

@@ -200,5 +200,16 @@ class SshClientHelperTest {
 
         assertEquals(listOf("b", "c", "d"), replay.snapshot())
     }
+
+    @Test
+    fun keepAliveIntervalIsConfiguredForFifteenSeconds() {
+        assertEquals(15, SshClientHelper.KEEPALIVE_INTERVAL_SECONDS)
+    }
+
+    @Test
+    fun robustSshClientInstantiatesProperly() {
+        val client = RobustSSHClient()
+        assertEquals(0, client.timeout)
+    }
 }
 
