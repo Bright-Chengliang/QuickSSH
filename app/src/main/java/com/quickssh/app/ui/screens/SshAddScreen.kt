@@ -1,6 +1,7 @@
 package com.quickssh.app.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -11,8 +12,11 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -38,6 +42,7 @@ import com.quickssh.app.data.PERSISTENT_SESSION_NONE
 import com.quickssh.app.data.PERSISTENT_SESSION_SCREEN
 import com.quickssh.app.data.PERSISTENT_SESSION_TMUX
 import com.quickssh.app.data.SshConfig
+import com.quickssh.app.data.SshTunnelPreset
 import com.quickssh.app.service.AUTH_TYPE_LOCAL
 import com.quickssh.app.service.AUTH_TYPE_PASSWORD
 import com.quickssh.app.service.AUTH_TYPE_PRIVATE_KEY
@@ -49,11 +54,12 @@ fun SshAddScreen(
     configToEdit: SshConfig? = null,
     isCopyMode: Boolean = false,
     decryptedPassword: String? = null,
+    availableTunnelPresets: List<SshTunnelPreset> = emptyList(),
     connectionTestStatus: String = "",
     isTestingConnection: Boolean = false,
     onBackClicked: () -> Unit,
     onTestConnectionClicked: (name: String, host: String, port: Int, user: String, authType: String, password: String, privateKey: String, workDirectory: String, postConnectCommand: String, terminalFontSizeSp: Int, terminalWrapEnabled: Boolean?, terminalTerm: String, terminalShortcuts: String, persistentSessionMode: String) -> Unit,
-    onSaveClicked: (name: String, host: String, port: Int, user: String, authType: String, password: String, privateKey: String, workDirectory: String, postConnectCommand: String, terminalFontSizeSp: Int, terminalWrapEnabled: Boolean?, terminalTerm: String, terminalShortcuts: String, persistentSessionMode: String, serverDisplayName: String) -> Unit
+    onSaveClicked: (name: String, host: String, port: Int, user: String, authType: String, password: String, privateKey: String, workDirectory: String, postConnectCommand: String, terminalFontSizeSp: Int, terminalWrapEnabled: Boolean?, terminalTerm: String, terminalShortcuts: String, persistentSessionMode: String, serverDisplayName: String, preConnectTunnelPresetId: Long?) -> Unit
 ) {
     val language = LocalQuickSshLanguage.current
     val isEditing = configToEdit != null && !isCopyMode
@@ -110,6 +116,9 @@ fun SshAddScreen(
     }
     var persistentSessionMode by remember(configToEdit?.id, configToEdit?.persistentSessionMode, isCopyMode) {
         mutableStateOf(configToEdit?.persistentSessionMode ?: PERSISTENT_SESSION_NONE)
+    }
+    var preConnectTunnelPresetId by remember(configToEdit?.id, configToEdit?.preConnectTunnelPresetId, isCopyMode) {
+        mutableStateOf(configToEdit?.preConnectTunnelPresetId)
     }
     var showErrors by remember { mutableStateOf(false) }
 
@@ -196,11 +205,7 @@ fun SshAddScreen(
                             authType = AUTH_TYPE_LOCAL
                             if (serverDisplayName.isBlank()) serverDisplayName = "本机"
                             if (name.isBlank()) name = "本地 Shell"
-                            host = if (LocalEnvironmentDetector.isTermuxInstalled()) {
-                                LocalEnvironmentDetector.TERMUX_BASH
-                            } else {
-                                LocalEnvironmentDetector.SYSTEM_SH
-                            }
+                            host = LocalEnvironmentDetector.defaultShellPath(context)
                             port = "0"
                             username = "local"
                             if (workDirectory.isBlank()) {
@@ -212,6 +217,24 @@ fun SshAddScreen(
                             }
                         },
                         label = { Text(language.text("本地终端", "Local Terminal")) }
+                    )
+                    FilterChip(
+                        selected = !isLocalMode && host == "127.0.0.1" && port == "8023",
+                        onClick = {
+                            authType = AUTH_TYPE_PASSWORD
+                            if (serverDisplayName.isBlank() || serverDisplayName == "本机") {
+                                serverDisplayName = "本机 Termux"
+                            }
+                            if (name.isBlank() || name == "本地 Shell") {
+                                name = "Termux 8023"
+                            }
+                            host = "127.0.0.1"
+                            port = "8023"
+                            if (username.isBlank() || username == "local") {
+                                username = "termux"
+                            }
+                        },
+                        label = { Text(language.text("Termux SSH (8023)", "Termux SSH (8023)")) }
                     )
                 }
             }
@@ -528,6 +551,76 @@ fun SshAddScreen(
                     )
                 }
 
+                if (!isLocalMode && availableTunnelPresets.isNotEmpty()) {
+                    Text(
+                        text = language.text("前置关联隧道（连接前自动就绪）", "Pre-connect Tunnel (Auto-start before connect)"),
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = language.text(
+                            "若访问此节点需先通过跳板机或本机端口转发，可在此选择隧道预设；连接时将自动在后台启动。",
+                            "If accessing this node requires local port forwarding through a jump host, choose a tunnel preset here; it will start automatically."
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                    var tunnelMenuExpanded by remember { mutableStateOf(false) }
+                    val selectedTunnelPreset = availableTunnelPresets.firstOrNull { it.id == preConnectTunnelPresetId }
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        FeedbackOutlinedButton(
+                            onClick = { tunnelMenuExpanded = true },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = selectedTunnelPreset?.let { "${it.name} (127.0.0.1:${if (it.localPort > 0) it.localPort else it.remotePort} -> ${it.remoteHost}:${it.remotePort})" }
+                                        ?: language.text("无（直连，不开启前置隧道）", "None (Direct connection, no pre-connect tunnel)"),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Icon(imageVector = Icons.Default.KeyboardArrowDown, contentDescription = null)
+                            }
+                        }
+                        DropdownMenu(
+                            expanded = tunnelMenuExpanded,
+                            onDismissRequest = { tunnelMenuExpanded = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text(language.text("无（直连，不开启前置隧道）", "None (Direct connection, no pre-connect tunnel)")) },
+                                onClick = {
+                                    preConnectTunnelPresetId = null
+                                    tunnelMenuExpanded = false
+                                }
+                            )
+                            availableTunnelPresets.forEach { preset ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            Text(preset.name, style = MaterialTheme.typography.bodyMedium)
+                                            val targetPort = if (preset.localPort > 0) preset.localPort else preset.remotePort
+                                            Text(
+                                                "127.0.0.1:$targetPort -> ${preset.remoteHost}:${preset.remotePort}",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.outline
+                                            )
+                                        }
+                                    },
+                                    onClick = {
+                                        preConnectTunnelPresetId = preset.id
+                                        tunnelMenuExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+
                 FeedbackOutlinedButton(
                     onClick = {
                         showErrors = true
@@ -585,7 +678,8 @@ fun SshAddScreen(
                             terminalTerm.trim(),
                             terminalShortcuts.trim(),
                             if (isLocalMode) PERSISTENT_SESSION_NONE else persistentSessionMode,
-                            serverDisplayName.trim()
+                            serverDisplayName.trim(),
+                            if (isLocalMode) null else preConnectTunnelPresetId
                         )
                     }
                 },

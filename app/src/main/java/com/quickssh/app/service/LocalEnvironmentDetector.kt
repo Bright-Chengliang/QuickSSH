@@ -42,18 +42,40 @@ object LocalEnvironmentDetector {
     }
 
     fun isBuiltinBusyboxAvailable(context: Context): Boolean {
-        // Android 10+ (API 29+) W^X security strictly denies executing binaries from app_data_file
-        if (android.os.Build.VERSION.SDK_INT >= 29) {
-            return false
-        }
+        // Android 10+ W^X only denies executing app_data_file (the writable app
+        // home). Binaries extracted into nativeLibraryDir keep the apk_data_file
+        // label and stay executable on API 29+, so probe instead of gating on
+        // SDK_INT. The probe goes through an applet-named symlink because
+        // busybox resolves the applet from argv[0]; invoking "libbusybox.so true"
+        // directly would report 127 even though exec succeeded.
         return runCatching {
             val file = getBuiltinBusyboxFile(context)
             if (!file.exists() || !file.canExecute()) return false
 
-            val proc = ProcessBuilder(file.absolutePath, "true").start()
+            // busybox resolves the applet from argv[0], so the probe symlink must
+            // be named after an applet ("true"); a custom name reports 127 even
+            // though exec succeeded.
+            val probeDir = File(context.cacheDir, "bbprobe")
+            probeDir.mkdirs()
+            val probe = File(probeDir, "true")
+            probe.delete()
+            android.system.Os.symlink(file.absolutePath, probe.absolutePath)
+
+            val proc = ProcessBuilder(probe.absolutePath).start()
             val finished = proc.waitFor(300, java.util.concurrent.TimeUnit.MILLISECONDS)
             finished && proc.exitValue() == 0
         }.getOrDefault(false)
+    }
+
+    /**
+     * Default shell for a new Local Terminal card: the full Termux environment
+     * when Termux is installed, otherwise the bundled BusyBox shell, otherwise
+     * the guaranteed Android system shell. Never depends on another app.
+     */
+    fun defaultShellPath(context: Context?): String = when {
+        isTermuxInstalled() -> TERMUX_BASH
+        context != null && isBuiltinBusyboxAvailable(context) -> BUILTIN_SHELL
+        else -> SYSTEM_SH
     }
 
     private val BUSYBOX_APPLETS = listOf(
@@ -93,6 +115,57 @@ object LocalEnvironmentDetector {
                 } catch (_: Throwable) {}
             }
         }
+
+        // Install built-in opencode launcher & CLI proxy script
+        val opencodeScript = File(binDir, "opencode")
+        try {
+            opencodeScript.writeText(
+                """
+                #!/system/bin/sh
+                # QuickSSH Built-in opencode Launcher & CLI Bridge
+                export TERM="${'$'}{TERM:-xterm-256color}"
+                export COLORTERM="${'$'}{COLORTERM:-truecolor}"
+                export LANG="${'$'}{LANG:-en_US.UTF-8}"
+
+                # 1. Look for existing opencode executable in Termux or global node paths
+                for candidate in \
+                    "/data/data/com.termux/files/usr/bin/opencode" \
+                    "/data/data/com.termux/files/home/.npm-global/bin/opencode" \
+                    "/data/data/com.termux/files/home/.local/bin/opencode" \
+                    "/data/data/com.termux/files/home/node_modules/.bin/opencode" \
+                    "$(which opencode 2>/dev/null)"
+                do
+                    if [ -n "${'$'}candidate" ] && [ -x "${'$'}candidate" ] && [ "${'$'}candidate" != "${'$'}0" ]; then
+                        exec "${'$'}candidate" "${'$'}@"
+                    fi
+                done
+
+                # 2. Check if node is available in Termux to execute opencode CLI
+                if [ -x "/data/data/com.termux/files/usr/bin/node" ]; then
+                    export PATH="/data/data/com.termux/files/usr/bin:${'$'}PATH"
+                    export LD_LIBRARY_PATH="/data/data/com.termux/files/usr/lib:${'$'}LD_LIBRARY_PATH"
+                    if [ -f "/data/data/com.termux/files/usr/lib/node_modules/opencode/bin/opencode.js" ]; then
+                        exec /data/data/com.termux/files/usr/bin/node "/data/data/com.termux/files/usr/lib/node_modules/opencode/bin/opencode.js" "${'$'}@"
+                    fi
+                fi
+
+                # 3. Interactive QuickSSH Agent Bridge fallback
+                echo "\033[1;36m================================================================\033[0m"
+                echo "\033[1;32m  🚀 QuickSSH Built-in opencode AI Agent Integration\033[0m"
+                echo "\033[1;36m================================================================\033[0m"
+                echo "QuickSSH Local Sandbox is ready for opencode CLI & Agent Bridge."
+                echo ""
+                echo "To link opencode with Termux runtime or install opencode CLI:"
+                echo "  1. In Termux, run: pkg install nodejs-lts && npm install -g opencode"
+                echo "  2. Or run: curl -s http://127.0.0.1:22022/install.sh | bash"
+                echo ""
+                echo "Tip: QuickSSH Agent Bridge is active on 127.0.0.1:22022."
+                echo "\033[1;36m================================================================\033[0m"
+                exit 0
+                """.trimIndent() + "\n"
+            )
+            opencodeScript.setExecutable(true, false)
+        } catch (_: Exception) {}
 
         val nativeLibDir = runCatching { context.applicationInfo?.nativeLibraryDir }.getOrNull() ?: ""
         val profileFile = File(context.filesDir, ".profile")
@@ -334,5 +407,32 @@ object LocalEnvironmentDetector {
             return defaultHomeFile.absolutePath
         }
         return context.filesDir.absolutePath
+    }
+
+    fun ensureProfileScriptExists(homeDir: String, binDirPath: String = ""): File {
+        val target = File(homeDir, ".quickssh_profile")
+        if (!target.exists()) {
+            runCatching {
+                target.parentFile?.mkdirs()
+                val pathExport = if (binDirPath.isNotBlank()) "export PATH=\"$binDirPath:\$PATH\"\n" else ""
+                target.writeText(
+                    """
+                    # QuickSSH Terminal Profile
+                    # Executed automatically on local terminal startup
+                    ${pathExport}export TERM="${'$'}{TERM:-xterm-256color}"
+                    export COLORTERM="${'$'}{COLORTERM:-truecolor}"
+                    export LANG="${'$'}{LANG:-en_US.UTF-8}"
+
+                    # Useful aliases
+                    alias ll='ls -la'
+                    alias la='ls -A'
+                    alias l='ls -CF'
+                    alias cls='clear'
+                    alias ai='opencode'
+                    """.trimIndent() + "\n"
+                )
+            }
+        }
+        return target
     }
 }

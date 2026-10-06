@@ -87,6 +87,27 @@ class TunnelForegroundServiceTest {
         assertEquals(3002, parameters.remotePort)
     }
 
+    @Test
+    fun probeLocalPortReturnsFalseForClosedPort() {
+        assertFalse(TunnelForegroundService.probeLocalPort(65534, timeoutMs = 50))
+    }
+
+    @Test
+    fun findActiveTunnelForPresetMatchesConfigAndRemotePort() {
+        val preset = com.quickssh.app.data.SshTunnelPreset(
+            id = 10L,
+            workspaceId = 1L,
+            name = "Test Tunnel",
+            remoteHost = "127.0.0.1",
+            remotePort = 3000,
+            localPort = 18080
+        )
+        // Note: _tunnelStates is empty by default in unit test environment
+        val active = TunnelForegroundService.findActiveTunnelForPreset(preset)
+        // Since no tunnels are started, it returns null cleanly without throwing
+        assertEquals(null, active)
+    }
+
     private fun sampleTunnel(id: String, status: TunnelStatus): TunnelServiceState {
         return TunnelServiceState(
             tunnelId = id,

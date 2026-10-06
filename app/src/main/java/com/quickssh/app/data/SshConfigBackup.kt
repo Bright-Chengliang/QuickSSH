@@ -25,6 +25,7 @@ data class SshConfigBackupRecord(
     val terminalTerm: String,
     val terminalShortcuts: String?,
     val persistentSessionMode: String = PERSISTENT_SESSION_NONE,
+    val preConnectTunnelPresetName: String? = null,
     val serverDisplayName: String? = null,
     val tunnelPresets: List<SshTunnelPresetBackupRecord> = emptyList()
 )
@@ -100,6 +101,7 @@ object SshConfigBackupCodec {
                     .put("terminalTerm", record.terminalTerm.ifBlank { "xterm-256color" })
                     .putNullable("terminalShortcuts", record.terminalShortcuts)
                     .put("persistentSessionMode", record.persistentSessionMode.ifBlank { PERSISTENT_SESSION_NONE })
+                    .putNullable("preConnectTunnelPresetName", record.preConnectTunnelPresetName)
                     .putNullable("serverDisplayName", record.serverDisplayName)
                     .put("tunnelPresets", tunnelPresets)
             )
@@ -250,6 +252,7 @@ object SshConfigBackupCodec {
             terminalTerm = terminalTerm,
             terminalShortcuts = optNullableString("terminalShortcuts"),
             persistentSessionMode = optString("persistentSessionMode", PERSISTENT_SESSION_NONE).ifBlank { PERSISTENT_SESSION_NONE },
+            preConnectTunnelPresetName = optNullableString("preConnectTunnelPresetName"),
             serverDisplayName = optNullableString("serverDisplayName"),
             tunnelPresets = optTunnelPresets()
         )

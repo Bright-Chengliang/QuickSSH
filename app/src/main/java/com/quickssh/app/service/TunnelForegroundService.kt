@@ -18,6 +18,7 @@ import androidx.core.app.NotificationCompat
 import com.quickssh.app.MainActivity
 import com.quickssh.app.data.AppDatabase
 import com.quickssh.app.data.SshConfig
+import com.quickssh.app.data.SshTunnelPreset
 import com.quickssh.app.data.transferContextLabel
 import com.quickssh.app.security.KeystoreManager
 import kotlinx.coroutines.CancellationException
@@ -38,7 +39,9 @@ import org.bouncycastle.jce.provider.BouncyCastleProvider
 import java.io.IOException
 import java.net.BindException
 import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.ServerSocket
+import java.net.Socket
 import java.security.Security
 
 private const val TUNNEL_RECONNECT_MAX_ATTEMPTS = 3
@@ -580,6 +583,34 @@ class TunnelForegroundService : Service() {
                 action = ACTION_STOP_ALL_TUNNELS
             }
             context.startService(intent)
+        }
+
+        fun findActiveTunnelForPreset(preset: SshTunnelPreset): TunnelServiceState? {
+            return _tunnelStates.value.firstOrNull { state ->
+                state.configId == preset.workspaceId &&
+                    state.remotePort == preset.remotePort &&
+                    (preset.localPort == 0 || state.localPort == preset.localPort) &&
+                    (state.status == TunnelStatus.RUNNING || state.status == TunnelStatus.CONNECTING)
+            }
+        }
+
+        fun probeLocalPort(port: Int, timeoutMs: Int = 300): Boolean = try {
+            Socket().use { socket ->
+                socket.connect(InetSocketAddress(LOOPBACK_HOST, port), timeoutMs)
+                true
+            }
+        } catch (_: Exception) {
+            false
+        }
+
+        suspend fun awaitLocalPort(port: Int, timeoutMs: Long = 8_000L): Boolean {
+            if (port !in 1..MAX_PORT) return false
+            val deadline = System.currentTimeMillis() + timeoutMs
+            while (System.currentTimeMillis() < deadline) {
+                if (probeLocalPort(port)) return true
+                delay(250L)
+            }
+            return probeLocalPort(port)
         }
     }
 }

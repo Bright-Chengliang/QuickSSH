@@ -578,6 +578,7 @@ class SshClientHelper(
         closeCurrentConnection()
         if (userRequestedDisconnect) return
         reconnectAttempt++
+
         updateStatus(SshSessionStatus.RECONNECTING, "Reconnecting after ${cause.localizedMessage ?: cause.javaClass.simpleName}")
         val delayMillis = reconnectDelayMillis(reconnectAttempt)
         emitLog("\n[QuickSSH] Session retained. Reconnect attempt $reconnectAttempt in ${delayMillis / 1000}s.")

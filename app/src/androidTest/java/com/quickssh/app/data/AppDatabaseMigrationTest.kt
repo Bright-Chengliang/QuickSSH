@@ -59,6 +59,20 @@ class AppDatabaseMigrationTest {
         }
     }
 
+    @Test
+    fun migratesToVersionElevenPreservingPreConnectTunnelPresetIdColumn() = runBlocking {
+        createLegacyVersionOneDatabase()
+
+        val database = openMigratedDatabase()
+        try {
+            val config = database.sshConfigDao().getConfigById(1)
+            assertNotNull(config)
+            assertEquals(null, config?.preConnectTunnelPresetId)
+        } finally {
+            database.close()
+        }
+    }
+
     private fun openMigratedDatabase(): AppDatabase {
         return Room.databaseBuilder(context, AppDatabase::class.java, TEST_DB)
             .addMigrations(*AppDatabase.migrations())

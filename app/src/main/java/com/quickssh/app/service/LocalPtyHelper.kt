@@ -30,6 +30,8 @@ class LocalPtyHelper(
 ) : TerminalSessionClient {
 
     companion object {
+        const val KEY_TERMINAL_RUN_PROFILE = "terminal_run_profile"
+        private const val SETTINGS_PREFS_NAME = "quickssh_settings"
         private const val HISTORY_BUFFER_MAX_LINES = 100_000
         private const val RECENT_OUTPUT_REPLAY_MAX_CHUNKS = 32768
         private const val RECENT_OUTPUT_REPLAY_MAX_CHARS = 16 * 1024 * 1024
@@ -173,11 +175,22 @@ class LocalPtyHelper(
                 nativeSession = tryStartNativeSession(activeEnv)
             }
 
+            val prefs = appContext.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+            val runProfile = prefs.getBoolean(KEY_TERMINAL_RUN_PROFILE, true)
+            val binDir = LocalEnvironmentDetector.setupBuiltinEnvironment(appContext)
+            val profileCmd = "[ -f \"\$HOME/.quickssh_profile\" ] && . \"\$HOME/.quickssh_profile\" || [ -f \"\$HOME/.profile\" ] && . \"\$HOME/.profile\""
+            if (runProfile) {
+                LocalEnvironmentDetector.ensureProfileScriptExists(activeEnv.homeDir, binDir.absolutePath)
+            }
+
             if (nativeSession != null) {
                 _termuxSessionState.value = nativeSession
                 isConnected = true
                 updateStatus(SshSessionStatus.CONNECTED, "Local terminal active: ${activeEnv.shellName}")
                 emitLog("[QuickSSH Local] Shell active: ${activeEnv.shellName}\n")
+                if (runProfile) {
+                    nativeSession.write(profileCmd + "\n")
+                }
                 val postConnectCommands = postConnectCommands(config.postConnectCommand)
                 if (postConnectCommands.isNotEmpty()) {
                     emitLog("[QuickSSH Local] Running ${postConnectCommands.size} post-connect command(s)...\n")
@@ -210,7 +223,22 @@ class LocalPtyHelper(
 
             updateStatus(SshSessionStatus.CONNECTED, "Local terminal active: ${detected.shellName}")
 
-            launchReaderRoutine(proc.inputStream)
+            val streamSession = termuxManager.createStreamSession(
+                inputStream = proc.inputStream,
+                outputStream = proc.outputStream,
+                initialCols = terminalSize.columns,
+                initialRows = terminalSize.rows,
+                terminalTerm = config.terminalTerm,
+                onSessionFinished = {
+                    updateStatus(SshSessionStatus.DISCONNECTED, "Local terminal exited")
+                }
+            )
+
+            if (streamSession != null) {
+                _termuxSessionState.value = streamSession.session
+            } else {
+                launchReaderRoutine(proc.inputStream)
+            }
             launchProcessMonitor(proc)
 
             delay(SHELL_STARTUP_DELAY_MS)
@@ -219,6 +247,10 @@ class LocalPtyHelper(
             val sttyCmd = "stty rows ${terminalSize.rows} cols ${terminalSize.columns} 2>/dev/null\n"
             outputStream?.write(sttyCmd.toByteArray(Charsets.UTF_8))
             outputStream?.flush()
+
+            if (runProfile) {
+                writeCommandDirect(profileCmd)
+            }
 
             val postConnectCommands = postConnectCommands(config.postConnectCommand)
             if (postConnectCommands.isNotEmpty()) {

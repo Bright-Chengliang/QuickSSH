@@ -85,6 +85,18 @@ Developed by [Bright-Chengliang](https://github.com/Bright-Chengliang) · © 202
 
 **具体实现：** 应用全面集成 Termux 原生终端内核（`TerminalView` & `TerminalEmulator`），提供标准 PTY、全量 DEC 控制序列与真彩 ANSI 渲染。新增“本地终端模式”，自动探测并直连系统 Shell (`/system/bin/sh`)、Termux 环境 (`/data/data/com.termux/files/usr/bin/bash`) 或应用内置的 Linux BusyBox 容器，完全复用多工作区配置与前台守护。针对 Windows ConPTY / SSH 下 TUI 工具缺失鼠标报告的场景，实现智能手势步长换算与 VT PageUp/PageDown 分发，使 OpenCode 等全屏 TUI 消息历史上下滑动获得与 Termux 原生完全一致的顺畅体验。
 
+### 8. 内置 OpenCode AI Agent、Profile 脚本与 Termux 双向网关
+
+<ins><em>本地终端内置 opencode 启动器与自动 Profile 加载，打通 QuickSSH 与 Termux 之间的 Agent 调用与主机发现。</em></ins>
+
+**设计动机：** 移动端开发者希望打开终端即进入完备的工作环境，无需每次手动 export 环境变量与别名；同时希望在 Termux 中运行的 AI Agent 与本地开发脚本能方便地调用 QuickSSH 管理的服务器资产与终端执行能力。
+
+**具体实现：** 
+- **内置 `opencode` 启动器**：本地沙盒环境预置 `opencode` 启动代理与 `ai` 别名，自动检测并联动 Termux/Node 全局环境与 QuickSSH Agent 网关，实现开箱即用的 AI 辅助编程能力。
+- **默认启动加载 Profile 脚本**：设置中提供「本地终端启动执行 Profile」选项（默认开启），本地终端初始化时自动创建并执行 `~/.quickssh_profile`（或 `~/.profile`），预设 `PATH`、`TERM=xterm-256color`、真彩支持及实用别名（`ll`, `la`, `cls`, `ai`）。
+- **Termux & QuickSSH Agent 网关 (`AgentBridgeService`)**：在本地回环 `127.0.0.1:22022` 提供极简 RESTful API 与 Termux CLI 一键安装脚本（`curl -s http://127.0.0.1:22022/install.sh | bash`），支持从 Termux 无缝查询配置、聚合主机与执行终端指令。
+- **SSH 目标与 Hostname 聚合一览**：自动跨数据源扫描 QuickSSH 数据库、Termux `~/.ssh/config` 及 `~/.ssh/known_hosts`，在服务器列表提供一键搜索、复制 Hostname、复制 SSH 连接命令及一键导入直连。
+
 ## 架构概览
 
 ```mermaid

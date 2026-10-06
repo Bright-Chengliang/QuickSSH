@@ -39,3 +39,7 @@ window.xml
 *.pfx
 *id_rsa*
 *id_ed25519*
+
+# AOCI agent host integration (machine-bound; do not commit)
+opencode.json
+opencode.json.backup.*

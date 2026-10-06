@@ -5,6 +5,10 @@
 
 package com.quickssh.app.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -15,14 +19,19 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -32,12 +41,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.res.painterResource
 import com.quickssh.app.BuildConfig
 import com.quickssh.app.R
+import com.quickssh.app.service.AgentBridgeService
+import com.quickssh.app.service.AgentBridgeState
+import com.quickssh.app.service.AgentBridgeStatus
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -51,20 +65,32 @@ fun SettingsScreen(
     downloadDirectoryLabel: String,
     serverProfileCount: Int,
     backupStatusText: String,
+    terminalRunProfileEnabled: Boolean = true,
+    agentBridgeEnabled: Boolean = false,
+    agentBridgePort: Int = AgentBridgeService.DEFAULT_BRIDGE_PORT,
+    termuxSshPort: Int = AgentBridgeService.DEFAULT_TERMUX_SSH_PORT,
+    agentBridgeState: AgentBridgeState = AgentBridgeState(),
     bottomBar: @Composable () -> Unit,
     onAutoWrapChange: (Boolean) -> Unit,
     onPrivacyModeChange: (Boolean) -> Unit,
     onBiometricUnlockChange: (Boolean) -> Unit,
     onStrictHostKeyVerificationChange: (Boolean) -> Unit,
+    onTerminalRunProfileChange: (Boolean) -> Unit = {},
     onChooseDownloadDirectory: () -> Unit,
     onExportConfigs: (String?) -> Unit,
     onImportConfigs: (String?) -> Unit,
-    onLanguageChange: (AppLanguage) -> Unit
+    onLanguageChange: (AppLanguage) -> Unit,
+    onAgentBridgeEnabledChange: (Boolean) -> Unit = {},
+    onAgentBridgePortChange: (Int) -> Unit = {},
+    onTermuxSshPortChange: (Int) -> Unit = {}
 ) {
+    val context = LocalContext.current
     var showExportDialog by remember { mutableStateOf(false) }
     var showImportDialog by remember { mutableStateOf(false) }
     var exportPassword by remember { mutableStateOf("") }
     var importPassword by remember { mutableStateOf("") }
+    var bridgePortText by remember(agentBridgePort) { mutableStateOf(agentBridgePort.toString()) }
+    var termuxPortText by remember(termuxSshPort) { mutableStateOf(termuxSshPort.toString()) }
 
     Scaffold(
         topBar = {
@@ -111,6 +137,12 @@ fun SettingsScreen(
                 onCheckedChange = onAutoWrapChange
             )
             SettingsSwitchRow(
+                title = language.text("本地终端启动执行 Profile", "Run Profile on Local Terminal Startup"),
+                detail = language.text("启动本地终端时自动执行 Profile 脚本 (~/.quickssh_profile 或 ~/.profile) 进行环境变量与别名初始化。", "Automatically run profile script (~/.quickssh_profile or ~/.profile) to initialize environment variables and aliases on local terminal startup."),
+                checked = terminalRunProfileEnabled,
+                onCheckedChange = onTerminalRunProfileChange
+            )
+            SettingsSwitchRow(
                 title = language.text("隐私模式", "Privacy mode"),
                 detail = language.text("阻止敏感页面截图和最近任务预览。", "Block screenshots and app previews on sensitive screens."),
                 checked = privacyModeEnabled,
@@ -134,7 +166,6 @@ fun SettingsScreen(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                val context = androidx.compose.ui.platform.LocalContext.current
                 val isBatteryIgnored = remember(context) { com.quickssh.app.utils.BatteryOptimizationHelper.isIgnored(context) }
 
                 Column(modifier = Modifier.weight(1f)) {
@@ -160,6 +191,144 @@ fun SettingsScreen(
                         com.quickssh.app.utils.BatteryOptimizationHelper.requestIgnore(context)
                     }) {
                         Text(language.text("开启保活", "Allow"))
+                    }
+                }
+            }
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                )
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = language.text("Termux & Agent 互通网关", "Termux & Agent Interop Gateway"),
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = language.text(
+                                    "启动本机回环服务，允许 Termux 与 AI Agent 访问 QuickSSH 终端及配置。",
+                                    "Run loopback gateway allowing Termux and AI Agents to interoperate with QuickSSH."
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.outline,
+                                modifier = Modifier.padding(top = 2.dp)
+                            )
+                        }
+                        Switch(
+                            checked = agentBridgeEnabled,
+                            onCheckedChange = onAgentBridgeEnabledChange
+                        )
+                    }
+
+                    if (agentBridgeState.errorMessage != null || agentBridgeState.status == AgentBridgeStatus.PORT_CONFLICT) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.errorContainer,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = agentBridgeState.errorMessage
+                                    ?: language.text("端口冲突：指定端口已被占用，请更改端口！", "Port conflict: Selected port is already in use!"),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                modifier = Modifier.padding(10.dp)
+                            )
+                        }
+                    }
+
+                    if (agentBridgeEnabled) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = bridgePortText,
+                                onValueChange = { input ->
+                                    bridgePortText = input.filter { it.isDigit() }
+                                    val port = bridgePortText.toIntOrNull()
+                                    if (port != null && port in 1024..65535) {
+                                        onAgentBridgePortChange(port)
+                                    }
+                                },
+                                label = { Text(language.text("网关端口", "Gateway Port")) },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                modifier = Modifier.weight(1f),
+                                singleLine = true,
+                                isError = bridgePortText.toIntOrNull()?.let { it !in 1024..65535 } ?: true
+                            )
+
+                            OutlinedTextField(
+                                value = termuxPortText,
+                                onValueChange = { input ->
+                                    termuxPortText = input.filter { it.isDigit() }
+                                    val port = termuxPortText.toIntOrNull()
+                                    if (port != null && port in 1024..65535) {
+                                        onTermuxSshPortChange(port)
+                                    }
+                                },
+                                label = { Text(language.text("Termux SSH端口", "Termux SSH Port")) },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                modifier = Modifier.weight(1f),
+                                singleLine = true,
+                                isError = termuxPortText.toIntOrNull()?.let { it !in 1024..65535 } ?: true
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = when (agentBridgeState.status) {
+                                    AgentBridgeStatus.RUNNING -> language.text(
+                                        "状态: 运行中 (127.0.0.1:${agentBridgeState.port})",
+                                        "Status: Running (127.0.0.1:${agentBridgeState.port})"
+                                    )
+                                    AgentBridgeStatus.STARTING -> language.text("状态: 启动中...", "Status: Starting...")
+                                    AgentBridgeStatus.STOPPED -> language.text("状态: 已停止", "Status: Stopped")
+                                    AgentBridgeStatus.PORT_CONFLICT, AgentBridgeStatus.PORT_OCCUPIED -> language.text("状态: 端口冲突", "Status: Port Conflict")
+                                    AgentBridgeStatus.ERROR -> language.text("状态: 发生异常", "Status: Error")
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (agentBridgeState.status == AgentBridgeStatus.RUNNING) {
+                                    MaterialTheme.colorScheme.primary
+                                } else if (agentBridgeState.status == AgentBridgeStatus.PORT_CONFLICT || agentBridgeState.status == AgentBridgeStatus.PORT_OCCUPIED || agentBridgeState.status == AgentBridgeStatus.ERROR) {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    MaterialTheme.colorScheme.outline
+                                }
+                            )
+
+                            FeedbackButton(
+                                onClick = {
+                                    val cmd = "curl -s http://127.0.0.1:${agentBridgePort}/install.sh | bash"
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    clipboard.setPrimaryClip(ClipData.newPlainText("quickssh_install", cmd))
+                                    Toast.makeText(
+                                        context,
+                                        language.text("已复制 Termux 一键配置命令到剪贴板", "Copied Termux setup command to clipboard"),
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            ) {
+                                Text(language.text("复制 Termux 配置命令", "Copy Termux Setup Cmd"))
+                            }
+                        }
                     }
                 }
             }

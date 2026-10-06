@@ -71,6 +71,7 @@ import com.quickssh.app.data.SshServerGroup
 import com.quickssh.app.data.filterSshConfigs
 import com.quickssh.app.data.groupedSshServers
 import com.quickssh.app.data.workspaceLabel
+import com.quickssh.app.utils.DiscoveredSshHost
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -85,11 +86,13 @@ fun SshListScreen(
     onCopyClicked: (SshConfig) -> Unit,
     onDeleteClicked: (SshConfig) -> Unit,
     onReorderServers: (List<Long>) -> Unit,
-    onReorderWorkspaces: (Long, List<Long>) -> Unit
+    onReorderWorkspaces: (Long, List<Long>) -> Unit,
+    onImportDiscoveredHost: (DiscoveredSshHost) -> Unit = {}
 ) {
     val language = LocalQuickSshLanguage.current
     var searchQuery by remember { mutableStateOf("") }
     var isEditMode by remember { mutableStateOf(false) }
+    var showDevicesDialog by remember { mutableStateOf(false) }
     val filteredConfigs by remember(configs, searchQuery) { derivedStateOf { filterSshConfigs(configs, searchQuery) } }
     val groups by remember(filteredConfigs) { derivedStateOf { groupedSshServers(filteredConfigs) } }
     val groupByKey = remember(groups) { groups.associateBy { it.key } }
@@ -135,6 +138,21 @@ fun SshListScreen(
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(end = 6.dp)
+                )
+                FilterChip(
+                    selected = false,
+                    onClick = { showDevicesDialog = true },
+                    label = {
+                        Text(language.text("主机一览", "Hosts"))
+                    },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    },
+                    modifier = Modifier.padding(end = 4.dp)
                 )
                 if (configs.isNotEmpty()) {
                     FilterChip(
@@ -355,6 +373,22 @@ fun SshListScreen(
                 }
             }
         }
+    }
+
+    if (showDevicesDialog) {
+        SshDevicesOverviewDialog(
+            configs = configs,
+            language = language,
+            onDismiss = { showDevicesDialog = false },
+            onConnectConfig = { configId ->
+                showDevicesDialog = false
+                configs.firstOrNull { it.id == configId }?.let { onConnectClicked(it) }
+            },
+            onImportAndConnect = { device ->
+                showDevicesDialog = false
+                onImportDiscoveredHost(device)
+            }
+        )
     }
 }
 
