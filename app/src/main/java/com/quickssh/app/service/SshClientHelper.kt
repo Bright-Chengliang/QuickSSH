@@ -143,6 +143,19 @@ class SshClientHelper(
             emitLog(if (reconnectAttempt == 0) "[QuickSSH] Connecting..." else "\n[QuickSSH] Reconnecting background SSH session...")
             closeCurrentConnection()
 
+            // A workspace with a pre-connect tunnel usually targets the tunnel's loopback port,
+            // so every connect and reconnect must (re)establish the tunnel first; otherwise the
+            // session retries a dead 127.0.0.1 port forever once the tunnel has given up.
+            val preConnectPresetId = config.preConnectTunnelPresetId
+            if (preConnectPresetId != null) {
+                emitLog("[QuickSSH] Ensuring pre-connect tunnel...")
+                val tunnel = TunnelForegroundService.ensurePreConnectTunnel(appContext, preConnectPresetId)
+                emitLog("[QuickSSH] ${tunnel.message}")
+                if (!tunnel.ready) {
+                    throw java.io.IOException(tunnel.message)
+                }
+            }
+
             sshClient = RobustSSHClient().apply {
                 connectTimeout = CONNECT_TIMEOUT_MS
                 timeout = 0
@@ -269,8 +282,13 @@ class SshClientHelper(
             } else {
                 closeCurrentConnection()
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
-            if (!userRequestedDisconnect) scheduleReconnect(e)
+            if (!userRequestedDisconnect) {
+                emitLog("\n[QuickSSH Info] Connection failed: ${e.localizedMessage ?: e.javaClass.simpleName}")
+                scheduleReconnect(e)
+            }
         }
     }
 
@@ -998,7 +1016,9 @@ internal fun persistentScreenCommand(sessionName: String, workDirectory: String?
  * Enhanced SSHClient that enables OS-level TCP KeepAlive, low-delay traffic class,
  * and TCP_NODELAY on the underlying socket for superior background stability.
  */
-open class RobustSSHClient : SSHClient() {
+open class RobustSSHClient(
+    sshConfig: net.schmizz.sshj.Config = net.schmizz.sshj.DefaultConfig()
+) : SSHClient(sshConfig) {
     override fun onConnect() {
         super.onConnect()
         try {

@@ -1,12 +1,20 @@
 package com.quickssh.app.ui.screens
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -14,29 +22,39 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.style.TextOverflow
+import com.quickssh.app.R
 import com.quickssh.app.data.PERSISTENT_SESSION_AUTO
 import com.quickssh.app.data.PERSISTENT_SESSION_NONE
 import com.quickssh.app.data.PERSISTENT_SESSION_SCREEN
@@ -46,7 +64,9 @@ import com.quickssh.app.data.SshTunnelPreset
 import com.quickssh.app.service.AUTH_TYPE_LOCAL
 import com.quickssh.app.service.AUTH_TYPE_PASSWORD
 import com.quickssh.app.service.AUTH_TYPE_PRIVATE_KEY
+import com.quickssh.app.service.FileTransferHelper
 import com.quickssh.app.service.LocalEnvironmentDetector
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -59,7 +79,8 @@ fun SshAddScreen(
     isTestingConnection: Boolean = false,
     onBackClicked: () -> Unit,
     onTestConnectionClicked: (name: String, host: String, port: Int, user: String, authType: String, password: String, privateKey: String, workDirectory: String, postConnectCommand: String, terminalFontSizeSp: Int, terminalWrapEnabled: Boolean?, terminalTerm: String, terminalShortcuts: String, persistentSessionMode: String) -> Unit,
-    onSaveClicked: (name: String, host: String, port: Int, user: String, authType: String, password: String, privateKey: String, workDirectory: String, postConnectCommand: String, terminalFontSizeSp: Int, terminalWrapEnabled: Boolean?, terminalTerm: String, terminalShortcuts: String, persistentSessionMode: String, serverDisplayName: String, preConnectTunnelPresetId: Long?) -> Unit
+    onSaveClicked: (name: String, host: String, port: Int, user: String, authType: String, password: String, privateKey: String, workDirectory: String, postConnectCommand: String, terminalFontSizeSp: Int, terminalWrapEnabled: Boolean?, terminalTerm: String, terminalShortcuts: String, persistentSessionMode: String, serverDisplayName: String, preConnectTunnelPresetId: Long?) -> Unit,
+    onListRemoteDirectory: (suspend (host: String, port: Int, user: String, authType: String, password: String, privateKey: String, remotePath: String) -> Result<List<FileTransferHelper.RemoteEntry>>)? = null
 ) {
     val language = LocalQuickSshLanguage.current
     val isEditing = configToEdit != null && !isCopyMode
@@ -121,6 +142,7 @@ fun SshAddScreen(
         mutableStateOf(configToEdit?.preConnectTunnelPresetId)
     }
     var showErrors by remember { mutableStateOf(false) }
+    var showDirectoryBrowser by remember { mutableStateOf(false) }
 
     val isLocalMode = authType == AUTH_TYPE_LOCAL || configToEdit?.isLocalSession == true
     val parsedPort = if (isLocalMode) 0 else port.toIntOrNull()
@@ -437,14 +459,54 @@ fun SshAddScreen(
                 }
             }
 
-            OutlinedTextField(
-                value = workDirectory,
-                onValueChange = { workDirectory = it },
-                label = { Text("Default work directory") },
-                placeholder = { Text("Example: /var/www/html") },
+            Row(
                 modifier = Modifier.fillMaxWidth(),
-                singleLine = true
-            )
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.Top
+            ) {
+                OutlinedTextField(
+                    value = workDirectory,
+                    onValueChange = { workDirectory = it },
+                    label = { Text(language.text("默认工作目录", "Default work directory")) },
+                    placeholder = { Text("Example: /var/www/html") },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    trailingIcon = if (!isLocalMode && onListRemoteDirectory != null) {
+                        {
+                            IconButton(onClick = { showDirectoryBrowser = true }) {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_folder),
+                                    contentDescription = language.text("浏览目录", "Browse directory"),
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                    } else null
+                )
+            }
+
+            if (showDirectoryBrowser && onListRemoteDirectory != null) {
+                RemoteDirectoryBrowserDialog(
+                    initialPath = workDirectory.trim().ifBlank { "/" },
+                    language = language,
+                    onListDirectory = { path ->
+                        onListRemoteDirectory(
+                            host.trim(),
+                            parsedPort ?: 22,
+                            username.trim(),
+                            authType,
+                            password,
+                            privateKey,
+                            path
+                        )
+                    },
+                    onPathSelected = { selectedPath ->
+                        workDirectory = selectedPath
+                        showDirectoryBrowser = false
+                    },
+                    onDismiss = { showDirectoryBrowser = false }
+                )
+            }
 
             OutlinedTextField(
                 value = postConnectCommand,
@@ -714,6 +776,174 @@ internal fun sshPrivateKeyCredentialMissing(
     hasSavedPrivateKey: Boolean
 ): Boolean {
     return authType == AUTH_TYPE_PRIVATE_KEY && privateKey.isBlank() && !hasSavedPrivateKey
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun RemoteDirectoryBrowserDialog(
+    initialPath: String,
+    language: AppLanguage,
+    onListDirectory: suspend (String) -> Result<List<FileTransferHelper.RemoteEntry>>,
+    onPathSelected: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    var currentPath by remember { mutableStateOf(initialPath) }
+    var entries = remember { mutableStateListOf<FileTransferHelper.RemoteEntry>() }
+    var isLoading by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    suspend fun loadDirectory(path: String) {
+        isLoading = true
+        errorMessage = null
+        val result = onListDirectory(path)
+        result.fold(
+            onSuccess = { list ->
+                entries.clear()
+                entries.addAll(list)
+                currentPath = path
+            },
+            onFailure = { error ->
+                errorMessage = error.message ?: "Failed to list directory"
+            }
+        )
+        isLoading = false
+    }
+
+    LaunchedEffect(Unit) {
+        loadDirectory(currentPath)
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column {
+                Text(
+                    text = language.text("选择工作目录", "Select Work Directory"),
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = currentPath,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.weight(1f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 400.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                if (isLoading) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(200.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator()
+                    }
+                } else if (errorMessage != null) {
+                    Text(
+                        text = errorMessage ?: "",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        // Parent directory
+                        if (currentPath != "/") {
+                            item {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            val parentPath = currentPath
+                                                .trimEnd('/')
+                                                .substringBeforeLast('/', "/")
+                                                .ifBlank { "/" }
+                                            scope.launch {
+                                                loadDirectory(parentPath)
+                                            }
+                                        }
+                                        .padding(12.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        painter = painterResource(R.drawable.ic_folder),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp),
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                    Text(
+                                        text = "..",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontFamily = FontFamily.Monospace
+                                    )
+                                }
+                            }
+                        }
+
+                        // Directory entries
+                        items(entries.filter { it.isDirectory }) { entry ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        scope.launch {
+                                            loadDirectory(entry.path)
+                                        }
+                                    }
+                                    .padding(12.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_folder),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp),
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = entry.name,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            FeedbackButton(
+                onClick = { onPathSelected(currentPath) }
+            ) {
+                Text(language.text("选择此目录", "Select This Directory"))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(language.text("取消", "Cancel"))
+            }
+        }
+    )
 }
 
 

@@ -132,6 +132,46 @@ class SshHostDiscoveryHelperTest {
     }
 
     @Test
+    fun testFromQuickSshConfigsGroupsByIp() {
+        val configs = listOf(
+            SshConfig(
+                id = 1L,
+                name = "Workspace A",
+                host = "192.168.1.10",
+                port = 22,
+                username = "root",
+                authType = AUTH_TYPE_PASSWORD
+            ),
+            SshConfig(
+                id = 2L,
+                name = "Workspace B",
+                host = "192.168.1.10",
+                port = 22,
+                username = "root",
+                authType = AUTH_TYPE_PASSWORD
+            ),
+            SshConfig(
+                id = 3L,
+                name = "Other host",
+                host = "10.0.0.7",
+                port = 22,
+                username = "root",
+                authType = AUTH_TYPE_PASSWORD
+            )
+        )
+
+        val discovered = SshHostDiscoveryHelper.fromQuickSshConfigs(configs)
+        assertEquals(2, discovered.size)
+
+        val grouped = discovered.first { it.hostname == "192.168.1.10" }
+        assertEquals(listOf(1L, 2L), grouped.groupedConfigIds)
+        assertEquals(1L, grouped.quickSshConfigId)
+
+        val other = discovered.first { it.hostname == "10.0.0.7" }
+        assertEquals(listOf(3L), other.groupedConfigIds)
+    }
+
+    @Test
     fun testToJsonFormat() {
         val hosts = listOf(
             DiscoveredSshHost(

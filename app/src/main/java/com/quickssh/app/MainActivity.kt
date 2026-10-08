@@ -2418,7 +2418,11 @@ class MainActivity : FragmentActivity() {
                     }
                     },
                     onReconnectSession = { sessionId ->
-                        boundService?.reconnectSession(sessionId)
+                        scope.launch {
+                            val configId = sessions.firstOrNull { it.sessionId == sessionId }?.configId
+                            configs.firstOrNull { it.id == configId }?.let { ensurePreConnectTunnelReady(it) }
+                            boundService?.reconnectSession(sessionId)
+                        }
                     },
                     onDisconnectSession = { sessionId ->
                         stopSshService(sessionId)
@@ -2572,6 +2576,39 @@ class MainActivity : FragmentActivity() {
                             connectionTestStatus = ""
                             currentScreen = "LIST"
                         }
+                    },
+                    onListRemoteDirectory = { sHost, sPort, sUser, sAuthType, sPass, sPrivateKey, sRemotePath ->
+                        val existingEncryptedPassword = configToEdit?.encryptedPassword
+                        val existingEncryptedPrivateKey = configToEdit?.encryptedPrivateKey
+                        val encryptedPassword = if (sAuthType == AUTH_TYPE_PASSWORD) {
+                            when {
+                                sPass.isNotEmpty() -> KeystoreManager.encrypt(sPass)
+                                !existingEncryptedPassword.isNullOrBlank() -> existingEncryptedPassword
+                                else -> null
+                            }
+                        } else {
+                            null
+                        }
+                        val encryptedPrivateKey = if (sAuthType == AUTH_TYPE_PRIVATE_KEY) {
+                            when {
+                                sPrivateKey.isNotBlank() -> KeystoreManager.encrypt(sPrivateKey)
+                                !existingEncryptedPrivateKey.isNullOrBlank() -> existingEncryptedPrivateKey
+                                else -> null
+                            }
+                        } else {
+                            null
+                        }
+                        val tempConfig = SshConfig(
+                            name = "temp",
+                            host = sHost,
+                            port = sPort,
+                            username = sUser,
+                            authType = sAuthType,
+                            encryptedPassword = encryptedPassword,
+                            encryptedPrivateKey = encryptedPrivateKey,
+                            workDirectory = sRemotePath
+                        )
+                        transferHelper().listRemoteDirectory(tempConfig, sRemotePath)
                     }
                 )
             }
@@ -3417,28 +3454,12 @@ class MainActivity : FragmentActivity() {
 
     private suspend fun ensurePreConnectTunnelReady(config: SshConfig) {
         val presetId = config.preConnectTunnelPresetId ?: return
-        val preset = withContext(Dispatchers.IO) {
-            db.sshConfigDao().getTunnelPresetById(presetId)
-        } ?: return
-
-        val active = TunnelForegroundService.findActiveTunnelForPreset(preset)
-        val targetLocalPort = if (preset.localPort > 0) preset.localPort else active?.localPort ?: preset.remotePort
-
-        if (active != null && active.status == TunnelStatus.RUNNING) {
-            return
+        // Start the tunnel while the activity is in the foreground (background FGS starts can be
+        // restricted). SshClientHelper re-runs the same check on every reconnect.
+        val result = TunnelForegroundService.ensurePreConnectTunnel(this@MainActivity, presetId)
+        if (!result.ready) {
+            Toast.makeText(this@MainActivity, result.message, Toast.LENGTH_SHORT).show()
         }
-
-        if (active == null) {
-            TunnelForegroundService.startTunnel(
-                context = this@MainActivity,
-                configId = preset.workspaceId,
-                remoteHost = preset.remoteHost,
-                remotePort = preset.remotePort,
-                localPort = preset.localPort
-            )
-        }
-
-        TunnelForegroundService.awaitLocalPort(targetLocalPort, timeoutMs = 8_000L)
     }
 
     private fun startSshService(sessionId: String, config: SshConfig) {

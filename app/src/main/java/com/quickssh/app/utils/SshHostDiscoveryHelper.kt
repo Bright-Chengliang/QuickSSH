@@ -20,6 +20,7 @@ data class DiscoveredSshHost(
     val username: String? = null,
     val source: SshHostSource,
     val quickSshConfigId: Long? = null,
+    val groupedConfigIds: List<Long> = emptyList(),
     val rawLine: String? = null
 ) {
     val sshCommand: String
@@ -42,19 +43,28 @@ object SshHostDiscoveryHelper {
     private const val TERMUX_SSH_DIR = "/data/data/com.termux/files/home/.ssh"
 
     fun fromQuickSshConfigs(configs: List<SshConfig>): List<DiscoveredSshHost> {
-        return configs
+        // Group by IP:port so the overview shows one card per IP rather than one per workspace
+        val byIpPort = configs
             .filter { it.authType != AUTH_TYPE_LOCAL && it.host.isNotBlank() }
-            .map { cfg ->
-                DiscoveredSshHost(
-                    id = "quickssh_${cfg.id}",
-                    alias = cfg.serverDisplayName?.ifBlank { cfg.name } ?: cfg.name,
-                    hostname = cfg.host.trim(),
-                    port = cfg.port,
-                    username = cfg.username.ifBlank { null },
-                    source = SshHostSource.QUICKSSH,
-                    quickSshConfigId = cfg.id
-                )
-            }
+            .groupBy { "${it.host.trim().lowercase()}:${it.port}" }
+
+        return byIpPort.values.map { group ->
+            val primary = group.first()
+            val allIds = group.map { it.id }
+            // Prefer a server-level display name; fall back to host:port
+            val alias = primary.serverDisplayName?.takeIf { it.isNotBlank() }
+                ?: "${primary.host.trim()}:${primary.port}"
+            DiscoveredSshHost(
+                id = "quickssh_ip_${primary.host.trim()}_${primary.port}",
+                alias = alias,
+                hostname = primary.host.trim(),
+                port = primary.port,
+                username = primary.username.ifBlank { null },
+                source = SshHostSource.QUICKSSH,
+                quickSshConfigId = primary.id,
+                groupedConfigIds = allIds
+            )
+        }
     }
 
     fun parseSshConfigFile(content: String): List<DiscoveredSshHost> {

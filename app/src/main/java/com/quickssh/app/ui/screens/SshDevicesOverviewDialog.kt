@@ -34,6 +34,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -66,6 +67,7 @@ fun SshDevicesOverviewDialog(
 
     var searchQuery by remember { mutableStateOf("") }
     var selectedSourceFilter by remember { mutableStateOf<SshHostSource?>(null) }
+    var workspacePickerDevice by remember { mutableStateOf<DiscoveredSshHost?>(null) }
 
     val filteredDevices = remember(allDevices, searchQuery, selectedSourceFilter) {
         allDevices.filter { device ->
@@ -277,7 +279,13 @@ fun SshDevicesOverviewDialog(
                                         Button(
                                             onClick = {
                                                 if (device.quickSshConfigId != null) {
-                                                    onConnectConfig(device.quickSshConfigId)
+                                                    if (device.groupedConfigIds.size > 1) {
+                                                        // Multiple workspaces on this IP, show picker
+                                                        workspacePickerDevice = device
+                                                    } else {
+                                                        // Single workspace, connect directly
+                                                        onConnectConfig(device.quickSshConfigId)
+                                                    }
                                                 } else {
                                                     onImportAndConnect(device)
                                                 }
@@ -292,7 +300,11 @@ fun SshDevicesOverviewDialog(
                                             Spacer(modifier = Modifier.width(4.dp))
                                             Text(
                                                 text = if (device.quickSshConfigId != null) {
-                                                    language.text("连接", "Connect")
+                                                    if (device.groupedConfigIds.size > 1) {
+                                                        language.text("选择工作区 (${device.groupedConfigIds.size})", "Choose Workspace (${device.groupedConfigIds.size})")
+                                                    } else {
+                                                        language.text("连接", "Connect")
+                                                    }
                                                 } else {
                                                     language.text("导入直连", "Import & Go")
                                                 },
@@ -313,4 +325,74 @@ fun SshDevicesOverviewDialog(
             }
         }
     )
+
+    // Workspace picker for IPs with multiple workspaces
+    workspacePickerDevice?.let { device ->
+        val workspaceConfigs = configs.filter { it.id in device.groupedConfigIds }
+        AlertDialog(
+            onDismissRequest = { workspacePickerDevice = null },
+            title = {
+                Column {
+                    Text(
+                        text = language.text("选择工作区", "Choose Workspace"),
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Text(
+                        text = "${device.hostname}:${device.port}",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            },
+            text = {
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(workspaceConfigs) { cfg ->
+                        OutlinedButton(
+                            onClick = {
+                                onConnectConfig(cfg.id)
+                                workspacePickerDevice = null
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = cfg.name,
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                    cfg.workDirectory?.takeIf { it.isNotBlank() }?.let { workDir ->
+                                        Text(
+                                            text = workDir,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = MaterialTheme.colorScheme.outline
+                                        )
+                                    }
+                                }
+                                Icon(
+                                    imageVector = Icons.Default.PlayArrow,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { workspacePickerDevice = null }) {
+                    Text(language.text("取消", "Cancel"))
+                }
+            }
+        )
+    }
 }

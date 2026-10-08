@@ -31,7 +31,16 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import net.schmizz.keepalive.KeepAliveProvider
+import net.schmizz.keepalive.KeepAliveRunner
+import net.schmizz.sshj.DefaultConfig
 import net.schmizz.sshj.SSHClient
 import net.schmizz.sshj.connection.channel.direct.LocalPortForwarder
 import net.schmizz.sshj.connection.channel.direct.Parameters
@@ -43,8 +52,16 @@ import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.security.Security
+import java.util.concurrent.atomic.AtomicBoolean
 
 private const val TUNNEL_RECONNECT_MAX_ATTEMPTS = 3
+
+/** Result of making sure a workspace's pre-connect tunnel is forwarding before SSH connects. */
+data class PreConnectTunnelResult(
+    val ready: Boolean,
+    val localPort: Int,
+    val message: String
+)
 
 enum class TunnelStatus {
     CONNECTING,
@@ -192,12 +209,19 @@ class TunnelForegroundService : Service() {
                             request.reconnectingState(config, lastKnownLocalPort, reconnectAttempt)
                         }
                     )
-                    client = RobustSSHClient().apply {
+                    // KeepAliveRunner sends keepalive@openssh requests and kills the transport
+                    // after unanswered probes, so a silently dead network is detected instead
+                    // of leaving a "RUNNING" tunnel whose local socket still accepts.
+                    val tunnelConfig = DefaultConfig().apply {
+                        keepAliveProvider = KeepAliveProvider.KEEP_ALIVE
+                    }
+                    client = RobustSSHClient(tunnelConfig).apply {
                         connectTimeout = CONNECT_TIMEOUT_MS
                         timeout = 0
                         addHostKeyVerifier(KnownHostsVerifier(applicationContext))
                         connect(config.host, config.port)
                         connection.keepAlive.keepAliveInterval = KEEPALIVE_INTERVAL_SECONDS
+                        (connection.keepAlive as? KeepAliveRunner)?.maxAliveCount = KEEPALIVE_MAX_UNANSWERED
                     }
                     authenticate(client, config)
 
@@ -226,7 +250,33 @@ class TunnelForegroundService : Service() {
                         NOTIFICATION_ID,
                         createNotification("QuickSSH tunnel active", "Forwarding ${request.remoteHost}:${request.remotePort} to 127.0.0.1:$actualLocalPort", ongoing = true)
                     )
-                    forwarder.listen()
+                    // LocalPortForwarder.listen() only watches the local ServerSocket; it never
+                    // notices that the SSH transport died. The watchdog closes the forwarder when
+                    // the transport is gone so listen() returns and the tunnel reconnects.
+                    val activeClient = checkNotNull(client)
+                    val activeForwarder = checkNotNull(forwarder)
+                    val transportLost = AtomicBoolean(false)
+                    val watchdog = serviceScope.launch {
+                        while (isActive) {
+                            delay(TRANSPORT_WATCHDOG_INTERVAL_MS)
+                            if (!activeClient.isConnected) {
+                                transportLost.set(true)
+                                runCatching { activeForwarder.close() }
+                                break
+                            }
+                        }
+                    }
+                    try {
+                        activeForwarder.listen()
+                    } finally {
+                        watchdog.cancel()
+                        // forwarder.close() interrupts the listening thread; clear the flag so the
+                        // pooled IO thread is not left interrupted.
+                        Thread.interrupted()
+                    }
+                    if (transportLost.get() && request.tunnelId in activeTunnels) {
+                        throw IOException("SSH tunnel transport lost")
+                    }
                     publishState(request.stoppedState(config, actualLocalPort, "Tunnel stopped"))
                     return
                 } catch (error: Throwable) {
@@ -523,7 +573,10 @@ class TunnelForegroundService : Service() {
     companion object {
         private const val CHANNEL_ID = "QuickSshTunnelForegroundChannel"
         private const val NOTIFICATION_ID = 4044
-        private const val KEEPALIVE_INTERVAL_SECONDS = 15
+        private const val KEEPALIVE_INTERVAL_SECONDS = 10
+        private const val KEEPALIVE_MAX_UNANSWERED = 3
+        private const val TRANSPORT_WATCHDOG_INTERVAL_MS = 2_000L
+        private const val PRE_CONNECT_TIMEOUT_MS = 20_000L
         private const val CONNECT_TIMEOUT_MS = 15_000
         const val LOOPBACK_HOST = "127.0.0.1"
         const val MAX_PORT = 65535
@@ -585,9 +638,81 @@ class TunnelForegroundService : Service() {
             context.startService(intent)
         }
 
+        private val preConnectMutex = Mutex()
+
+        /**
+         * Makes sure the pre-connect tunnel [presetId] is forwarding. Used by the first connect
+         * and by every SSH reconnect path, because a workspace whose host is the tunnel's
+         * loopback endpoint can never reconnect while the tunnel is down.
+         *
+         * Serialized so concurrent sessions sharing a preset do not race to bind the same port.
+         */
+        suspend fun ensurePreConnectTunnel(
+            context: Context,
+            presetId: Long,
+            timeoutMs: Long = PRE_CONNECT_TIMEOUT_MS
+        ): PreConnectTunnelResult = preConnectMutex.withLock {
+            val appContext = context.applicationContext
+            val preset = withContext(Dispatchers.IO) {
+                AppDatabase.getDatabase(appContext).sshConfigDao().getTunnelPresetById(presetId)
+            } ?: return@withLock PreConnectTunnelResult(false, 0, "Pre-connect tunnel preset no longer exists")
+
+            val active = findActiveTunnelForPreset(preset)
+            if (active != null && active.status == TunnelStatus.RUNNING) {
+                val alive = withContext(Dispatchers.IO) { probeLocalPort(active.localPort) }
+                if (alive) {
+                    return@withLock PreConnectTunnelResult(true, active.localPort, "Pre-connect tunnel already running")
+                }
+                // Reported RUNNING but the local port is dead: replace it. Intents to the same
+                // service are delivered in order, so the stop releases the port before the start.
+                runCatching { stopTunnel(appContext, active.tunnelId) }
+            }
+
+            val tunnelId = if (active != null && active.status == TunnelStatus.CONNECTING) {
+                active.tunnelId
+            } else {
+                runCatching {
+                    startTunnel(
+                        context = appContext,
+                        configId = preset.workspaceId,
+                        remoteHost = preset.remoteHost,
+                        remotePort = preset.remotePort,
+                        localPort = preset.localPort
+                    )
+                }.getOrElse { error ->
+                    return@withLock PreConnectTunnelResult(
+                        false,
+                        preset.localPort,
+                        "Unable to start pre-connect tunnel: ${error.message ?: error.javaClass.simpleName}"
+                    )
+                }
+            }
+            awaitTunnelReady(tunnelId, preset.localPort, timeoutMs)
+        }
+
+        private suspend fun awaitTunnelReady(tunnelId: String, fallbackPort: Int, timeoutMs: Long): PreConnectTunnelResult {
+            val settled = withTimeoutOrNull(timeoutMs) {
+                tunnelStates.first { states ->
+                    val state = states.firstOrNull { it.tunnelId == tunnelId }
+                    state != null && state.status != TunnelStatus.CONNECTING
+                }.first { it.tunnelId == tunnelId }
+            } ?: return PreConnectTunnelResult(false, fallbackPort, "Pre-connect tunnel did not become ready in ${timeoutMs / 1000}s")
+
+            if (settled.status != TunnelStatus.RUNNING) {
+                return PreConnectTunnelResult(false, settled.localPort, "Pre-connect tunnel ${settled.status.name.lowercase()}: ${settled.statusText}")
+            }
+            val listening = withContext(Dispatchers.IO) { awaitLocalPort(settled.localPort, timeoutMs = 3_000L) }
+            return if (listening) {
+                PreConnectTunnelResult(true, settled.localPort, "Pre-connect tunnel ready on 127.0.0.1:${settled.localPort}")
+            } else {
+                PreConnectTunnelResult(false, settled.localPort, "Pre-connect tunnel reports running but 127.0.0.1:${settled.localPort} is not listening")
+            }
+        }
+
         fun findActiveTunnelForPreset(preset: SshTunnelPreset): TunnelServiceState? {
             return _tunnelStates.value.firstOrNull { state ->
                 state.configId == preset.workspaceId &&
+                    state.remoteHost.equals(preset.remoteHost.trim().ifBlank { LOOPBACK_HOST }, ignoreCase = true) &&
                     state.remotePort == preset.remotePort &&
                     (preset.localPort == 0 || state.localPort == preset.localPort) &&
                     (state.status == TunnelStatus.RUNNING || state.status == TunnelStatus.CONNECTING)
