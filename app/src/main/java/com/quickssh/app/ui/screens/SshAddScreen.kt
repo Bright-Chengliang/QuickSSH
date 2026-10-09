@@ -19,6 +19,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Lock
@@ -61,6 +62,7 @@ import com.quickssh.app.data.PERSISTENT_SESSION_SCREEN
 import com.quickssh.app.data.PERSISTENT_SESSION_TMUX
 import com.quickssh.app.data.SshConfig
 import com.quickssh.app.data.SshTunnelPreset
+import com.quickssh.app.data.tunnelPresetDefaultName
 import com.quickssh.app.service.AUTH_TYPE_LOCAL
 import com.quickssh.app.service.AUTH_TYPE_PASSWORD
 import com.quickssh.app.service.AUTH_TYPE_PRIVATE_KEY
@@ -75,11 +77,13 @@ fun SshAddScreen(
     isCopyMode: Boolean = false,
     decryptedPassword: String? = null,
     availableTunnelPresets: List<SshTunnelPreset> = emptyList(),
+    availableServerConfigs: List<SshConfig> = emptyList(),
     connectionTestStatus: String = "",
     isTestingConnection: Boolean = false,
     onBackClicked: () -> Unit,
     onTestConnectionClicked: (name: String, host: String, port: Int, user: String, authType: String, password: String, privateKey: String, workDirectory: String, postConnectCommand: String, terminalFontSizeSp: Int, terminalWrapEnabled: Boolean?, terminalTerm: String, terminalShortcuts: String, persistentSessionMode: String) -> Unit,
     onSaveClicked: (name: String, host: String, port: Int, user: String, authType: String, password: String, privateKey: String, workDirectory: String, postConnectCommand: String, terminalFontSizeSp: Int, terminalWrapEnabled: Boolean?, terminalTerm: String, terminalShortcuts: String, persistentSessionMode: String, serverDisplayName: String, preConnectTunnelPresetId: Long?) -> Unit,
+    onCreateTunnelPreset: ((preset: SshTunnelPreset, onCreated: (Long) -> Unit) -> Unit)? = null,
     onListRemoteDirectory: (suspend (host: String, port: Int, user: String, authType: String, password: String, privateKey: String, remotePath: String) -> Result<List<FileTransferHelper.RemoteEntry>>)? = null
 ) {
     val language = LocalQuickSshLanguage.current
@@ -143,6 +147,7 @@ fun SshAddScreen(
     }
     var showErrors by remember { mutableStateOf(false) }
     var showDirectoryBrowser by remember { mutableStateOf(false) }
+    var showCreateTunnelDialog by remember { mutableStateOf(false) }
 
     val isLocalMode = authType == AUTH_TYPE_LOCAL || configToEdit?.isLocalSession == true
     val parsedPort = if (isLocalMode) 0 else port.toIntOrNull()
@@ -581,7 +586,7 @@ fun SshAddScreen(
                 )
                 Text(
                     language.text(
-                        "开启后，远端命令在 tmux/screen 中运行，SSH 断开后不会中断。仅限 Linux/macOS 远程。",
+                        "开启后，远端命令在 tmux/screen 中运行，SSH 断开后不会中断。仅限 Linux/macOS 远程机",
                         "When enabled, remote commands run inside tmux/screen and survive SSH disconnections. Linux/macOS remote only."
                     ),
                     style = MaterialTheme.typography.bodySmall,
@@ -613,53 +618,81 @@ fun SshAddScreen(
                     )
                 }
 
-                if (!isLocalMode && availableTunnelPresets.isNotEmpty()) {
+                // ===== 前置关联隧道（常驻显示，支持行内快捷新建） =====
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Text(
                         text = language.text("前置关联隧道（连接前自动就绪）", "Pre-connect Tunnel (Auto-start before connect)"),
                         style = MaterialTheme.typography.titleSmall,
                         color = MaterialTheme.colorScheme.primary
                     )
-                    Text(
-                        text = language.text(
-                            "若访问此节点需先通过跳板机或本机端口转发，可在此选择隧道预设；连接时将自动在后台启动。",
-                            "If accessing this node requires local port forwarding through a jump host, choose a tunnel preset here; it will start automatically."
-                        ),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.outline
-                    )
-                    var tunnelMenuExpanded by remember { mutableStateOf(false) }
-                    val selectedTunnelPreset = availableTunnelPresets.firstOrNull { it.id == preConnectTunnelPresetId }
-                    Box(modifier = Modifier.fillMaxWidth()) {
-                        FeedbackOutlinedButton(
-                            onClick = { tunnelMenuExpanded = true },
-                            modifier = Modifier.fillMaxWidth()
+                    TextButton(
+                        onClick = { showCreateTunnelDialog = true },
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(language.text("新建隧道", "New Tunnel"), style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+                Text(
+                    text = language.text(
+                        "若访问此节点需先通过跳板机或本机端口转发（如阿里云跳板连家庭电脑），可在此选择或新建隧道预设；连接时将自动在后台拉起隧道。",
+                        "If accessing this node requires local port forwarding through a jump host (e.g. Aliyun jump host to home PC), choose or create a tunnel preset here; it will start automatically."
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.outline
+                )
+
+                var tunnelMenuExpanded by remember { mutableStateOf(false) }
+                val selectedTunnelPreset = availableTunnelPresets.firstOrNull { it.id == preConnectTunnelPresetId }
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    FeedbackOutlinedButton(
+                        onClick = { tunnelMenuExpanded = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = selectedTunnelPreset?.let { "${it.name} (127.0.0.1:${if (it.localPort > 0) it.localPort else it.remotePort} -> ${it.remoteHost}:${it.remotePort})" }
-                                        ?: language.text("无（直连，不开启前置隧道）", "None (Direct connection, no pre-connect tunnel)"),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                Icon(imageVector = Icons.Default.KeyboardArrowDown, contentDescription = null)
-                            }
-                        }
-                        DropdownMenu(
-                            expanded = tunnelMenuExpanded,
-                            onDismissRequest = { tunnelMenuExpanded = false }
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text(language.text("无（直连，不开启前置隧道）", "None (Direct connection, no pre-connect tunnel)")) },
-                                onClick = {
-                                    preConnectTunnelPresetId = null
-                                    tunnelMenuExpanded = false
-                                }
+                            Text(
+                                text = selectedTunnelPreset?.let { "${it.name} (127.0.0.1:${if (it.localPort > 0) it.localPort else it.remotePort} -> ${it.remoteHost}:${it.remotePort})" }
+                                    ?: language.text("无（直连，不开启前置隧道）", "None (Direct connection, no pre-connect tunnel)"),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
                             )
+                            Icon(imageVector = Icons.Default.KeyboardArrowDown, contentDescription = null)
+                        }
+                    }
+                    DropdownMenu(
+                        expanded = tunnelMenuExpanded,
+                        onDismissRequest = { tunnelMenuExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text(language.text("无（直连，不开启前置隧道）", "None (Direct connection, no pre-connect tunnel)")) },
+                            onClick = {
+                                preConnectTunnelPresetId = null
+                                tunnelMenuExpanded = false
+                            }
+                        )
+                        if (availableTunnelPresets.isEmpty()) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        language.text("（暂无保存的隧道预设）", "(No saved tunnel presets)"),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.outline
+                                    )
+                                },
+                                onClick = { },
+                                enabled = false
+                            )
+                        } else {
                             availableTunnelPresets.forEach { preset ->
                                 DropdownMenuItem(
                                     text = {
@@ -680,7 +713,37 @@ fun SshAddScreen(
                                 )
                             }
                         }
+                        DropdownMenuItem(
+                            leadingIcon = { Icon(imageVector = Icons.Default.Add, contentDescription = null) },
+                            text = {
+                                Text(
+                                    language.text("+ 快速新建隧道预设...", "+ Create new tunnel preset..."),
+                                    color = MaterialTheme.colorScheme.primary,
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                            },
+                            onClick = {
+                                tunnelMenuExpanded = false
+                                showCreateTunnelDialog = true
+                            }
+                        )
                     }
+                }
+
+                if (showCreateTunnelDialog) {
+                    InlineCreateTunnelPresetDialog(
+                        currentEditingHost = host,
+                        currentEditingPort = parsedPort ?: 22,
+                        availableServerConfigs = availableServerConfigs,
+                        language = language,
+                        onDismiss = { showCreateTunnelDialog = false },
+                        onSave = { newPreset ->
+                            onCreateTunnelPreset?.invoke(newPreset) { createdId ->
+                                preConnectTunnelPresetId = createdId
+                            }
+                            showCreateTunnelDialog = false
+                        }
+                    )
                 }
 
                 FeedbackOutlinedButton(
@@ -760,6 +823,217 @@ fun SshAddScreen(
             }
         }
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun InlineCreateTunnelPresetDialog(
+    currentEditingHost: String,
+    currentEditingPort: Int,
+    availableServerConfigs: List<SshConfig>,
+    language: AppLanguage,
+    onDismiss: () -> Unit,
+    onSave: (SshTunnelPreset) -> Unit
+) {
+    val jumpCandidates = remember(availableServerConfigs) {
+        availableServerConfigs.filterNot { it.isLocalSession || it.authType == AUTH_TYPE_LOCAL }
+    }
+
+    var selectedJumpWorkspaceId by remember(jumpCandidates) {
+        mutableStateOf(jumpCandidates.firstOrNull()?.id ?: 0L)
+    }
+    val selectedJumpConfig = jumpCandidates.firstOrNull { it.id == selectedJumpWorkspaceId }
+
+    var presetName by remember(selectedJumpConfig, currentEditingPort) {
+        val jumpName = selectedJumpConfig?.serverDisplayName?.takeIf { it.isNotBlank() } ?: selectedJumpConfig?.name ?: "Jump"
+        mutableStateOf("$jumpName-Tunnel-$currentEditingPort")
+    }
+    var remoteHost by remember { mutableStateOf("127.0.0.1") }
+    var remotePortStr by remember(currentEditingPort) { mutableStateOf(currentEditingPort.toString()) }
+    var localPortStr by remember(currentEditingPort) { mutableStateOf(currentEditingPort.toString()) }
+    var note by remember { mutableStateOf("") }
+    var jumpMenuExpanded by remember { mutableStateOf(false) }
+
+    val parsedRemotePort = remotePortStr.toIntOrNull()
+    val parsedLocalPort = localPortStr.toIntOrNull() ?: 0
+    val isValid = selectedJumpWorkspaceId > 0L &&
+            presetName.isNotBlank() &&
+            remoteHost.isNotBlank() &&
+            parsedRemotePort != null && parsedRemotePort in 1..65535 &&
+            parsedLocalPort in 0..65535
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(language.text("快速新建前置关联隧道", "Create Pre-connect Tunnel"))
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = language.text(
+                        "配置一条通过跳板服务器端口转发的隧道，连接当前工作区前将自动拉起该隧道：",
+                        "Configure an SSH port forward through a jump server. It starts automatically before connecting:"
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.outline
+                )
+
+                // 1. 跳板服务器选择
+                Text(
+                    text = language.text("跳板服务器 (Jump Server)", "Jump Server / Workspace"),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                if (jumpCandidates.isEmpty()) {
+                    Text(
+                        text = language.text("⚠️ 暂无可用远程跳板服务器，请先添加跳板机（如阿里云）", "⚠️ No remote servers available as jump host."),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                } else {
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        FeedbackOutlinedButton(
+                            onClick = { jumpMenuExpanded = true },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = selectedJumpConfig?.let {
+                                        val label = it.serverDisplayName?.takeIf { name -> name.isNotBlank() } ?: it.name
+                                        "$label (${it.username}@${it.host}:${it.port})"
+                                    } ?: language.text("选择跳板机", "Select Jump Server"),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Icon(imageVector = Icons.Default.KeyboardArrowDown, contentDescription = null)
+                            }
+                        }
+                        DropdownMenu(
+                            expanded = jumpMenuExpanded,
+                            onDismissRequest = { jumpMenuExpanded = false }
+                        ) {
+                            jumpCandidates.forEach { candidate ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            val label = candidate.serverDisplayName?.takeIf { name -> name.isNotBlank() } ?: candidate.name
+                                            Text(label, style = MaterialTheme.typography.bodyMedium)
+                                            Text(
+                                                "${candidate.username}@${candidate.host}:${candidate.port}",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.outline
+                                            )
+                                        }
+                                    },
+                                    onClick = {
+                                        selectedJumpWorkspaceId = candidate.id
+                                        jumpMenuExpanded = false
+                                        val jumpName = candidate.serverDisplayName?.takeIf { name -> name.isNotBlank() } ?: candidate.name
+                                        presetName = "$jumpName-Tunnel-$remotePortStr"
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // 2. 预设名称
+                OutlinedTextField(
+                    value = presetName,
+                    onValueChange = { presetName = it },
+                    label = { Text(language.text("隧道预设名称", "Preset Name")) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                // 3. 远端主机 & 端口
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedTextField(
+                        value = remoteHost,
+                        onValueChange = { remoteHost = it.trim() },
+                        label = { Text(language.text("跳板视角目标", "Target Host")) },
+                        placeholder = { Text("127.0.0.1") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1.5f)
+                    )
+                    OutlinedTextField(
+                        value = remotePortStr,
+                        onValueChange = { remotePortStr = it.filter(Char::isDigit).take(5) },
+                        label = { Text(language.text("目标端口", "Target Port")) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                // 4. 本地监听端口
+                OutlinedTextField(
+                    value = localPortStr,
+                    onValueChange = { localPortStr = it.filter(Char::isDigit).take(5) },
+                    label = { Text(language.text("本机监听端口 (0为自动/同目标端口)", "Local Listen Port (0=auto)")) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    supportingText = {
+                        Text(
+                            language.text(
+                                "通常设置为与目标端口相同（如 $remotePortStr），当前工作区连接 127.0.0.1:$remotePortStr 即可直达目标。",
+                                "Usually set to same port ($remotePortStr). Connect to 127.0.0.1:$remotePortStr locally."
+                            )
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                // 5. 备注
+                OutlinedTextField(
+                    value = note,
+                    onValueChange = { note = it },
+                    label = { Text(language.text("备注 (可选)", "Note (Optional)")) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            FeedbackButton(
+                onClick = {
+                    if (isValid) {
+                        val preset = SshTunnelPreset(
+                            id = 0L,
+                            workspaceId = selectedJumpWorkspaceId,
+                            name = presetName.trim(),
+                            note = note.trim().ifBlank { null },
+                            remoteHost = remoteHost.trim().ifBlank { "127.0.0.1" },
+                            remotePort = parsedRemotePort ?: 22,
+                            localPort = parsedLocalPort
+                        )
+                        onSave(preset)
+                    }
+                },
+                enabled = isValid
+            ) {
+                Text(language.text("保存并关联", "Save & Link"))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(language.text("取消", "Cancel"))
+            }
+        }
+    )
 }
 
 internal fun sshPasswordCredentialMissing(
@@ -945,10 +1219,3 @@ fun RemoteDirectoryBrowserDialog(
         }
     )
 }
-
-
-
-
-
-
-

@@ -2438,6 +2438,7 @@ class MainActivity : FragmentActivity() {
                     isCopyMode = isCopyMode,
                     decryptedPassword = decryptedPassword,
                     availableTunnelPresets = tunnelPresets,
+                    availableServerConfigs = configs,
                     connectionTestStatus = connectionTestStatus,
                     isTestingConnection = isTestingConnection,
                     onBackClicked = {
@@ -2446,6 +2447,12 @@ class MainActivity : FragmentActivity() {
                         decryptedPassword = null
                         connectionTestStatus = ""
                         currentScreen = "LIST"
+                    },
+                    onCreateTunnelPreset = { preset, onCreated ->
+                        scope.launch {
+                            val savedId = db.sshConfigDao().saveTunnelPreset(preset)
+                            onCreated(savedId)
+                        }
                     },
                     onTestConnectionClicked = { sName, sHost, sPort, sUser, sAuthType, sPass, sPrivateKey, sWorkDir, sPostCommand, sFontSize, sWrapEnabled, sTerm, sShortcuts, sPersistentSession ->
                         val existingEncryptedPassword = configToEdit?.encryptedPassword
