@@ -73,6 +73,21 @@ class AppDatabaseMigrationTest {
         }
     }
 
+    @Test
+    fun migratesToVersionTwelvePreservingFolderIdColumnAndFoldersTable() = runBlocking {
+        createLegacyVersionOneDatabase()
+
+        val database = openMigratedDatabase()
+        try {
+            val config = database.sshConfigDao().getConfigById(1)
+            assertNotNull(config)
+            assertEquals(null, config?.folderId)
+            assertEquals(0, database.sshConfigDao().getAllFolders().size)
+        } finally {
+            database.close()
+        }
+    }
+
     private fun openMigratedDatabase(): AppDatabase {
         return Room.databaseBuilder(context, AppDatabase::class.java, TEST_DB)
             .addMigrations(*AppDatabase.migrations())

@@ -101,3 +101,9 @@ Initialization, complete-index generation, Header generation, Entries generation
 
 Do not preload, guess, or reconstruct these specialized workflows. The relevant Guide, tool descriptions, model Prompt, and CLI help provide platform invocation, request format, batch limits, approval rules, index-format details, and recovery steps as needed.
 <!-- aoci:end -->
+
+## Build & Release
+
+- Every release must be produced with `scripts/build-release.ps1`. It runs `assembleRelease`, signs the APK with the debug keystore, and copies the signed `app-release.apk` into the debug output directory.
+- The debug output directory (`app/build/outputs/apk/debug/`) must always contain a fresh `app-release.apk` next to `app-debug.apk`. Rebuild and overwrite it whenever the app code changes.
+- Prefer distributing `app/build/outputs/apk/debug/app-release.apk`; release builds run far faster than debug builds.

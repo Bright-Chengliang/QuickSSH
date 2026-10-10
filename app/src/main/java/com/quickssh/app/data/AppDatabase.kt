@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [SshServerNode::class, SshWorkspaceProfile::class, SshTunnelPreset::class, TransferHistoryEntry::class], version = 11, exportSchema = false)
+@Database(entities = [SshServerNode::class, SshWorkspaceProfile::class, SshTunnelPreset::class, TransferHistoryEntry::class, SshFolder::class], version = 12, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun sshConfigDao(): SshConfigDao
     abstract fun transferHistoryDao(): TransferHistoryDao
@@ -76,6 +76,13 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                createSshFoldersTable(db)
+                addFolderIdColumn(db)
+            }
+        }
+
         internal fun migrations(): Array<Migration> {
             return arrayOf(
                 MIGRATION_1_2,
@@ -87,7 +94,8 @@ abstract class AppDatabase : RoomDatabase() {
                 MIGRATION_7_8,
                 MIGRATION_8_9,
                 MIGRATION_9_10,
-                MIGRATION_10_11
+                MIGRATION_10_11,
+                MIGRATION_11_12
             )
         }
 
@@ -301,6 +309,27 @@ abstract class AppDatabase : RoomDatabase() {
             if ("preConnectTunnelPresetId" !in columns) {
                 database.execSQL("ALTER TABLE ssh_workspaces ADD COLUMN preConnectTunnelPresetId INTEGER DEFAULT NULL")
             }
+        }
+
+        private fun addFolderIdColumn(database: SupportSQLiteDatabase) {
+            createSshWorkspacesTable(database)
+            val columns = columnNames(database, "ssh_workspaces")
+            if ("folderId" !in columns) {
+                database.execSQL("ALTER TABLE ssh_workspaces ADD COLUMN folderId INTEGER DEFAULT NULL")
+            }
+        }
+
+        private fun createSshFoldersTable(database: SupportSQLiteDatabase) {
+            database.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS ssh_folders (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    name TEXT NOT NULL,
+                    sortOrder INTEGER NOT NULL DEFAULT 0,
+                    updateTime INTEGER NOT NULL
+                )
+                """.trimIndent()
+            )
         }
 
         private fun normalizeSshSortOrderColumns(database: SupportSQLiteDatabase) {

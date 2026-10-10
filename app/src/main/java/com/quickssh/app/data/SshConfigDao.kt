@@ -86,7 +86,8 @@ interface SshConfigDao {
                 defaultDisplayName = serverDisplayName
             )
         )
-        updateWorkspace(config.toWorkspaceProfile(serverId, now, workspaceSortOrder))
+        val resolvedFolderId = config.folderId ?: existingWorkspace.folderId
+        updateWorkspace(config.toWorkspaceProfile(serverId, now, workspaceSortOrder, resolvedFolderId))
     }
 
     @Transaction
@@ -210,6 +211,57 @@ interface SshConfigDao {
     @Query("SELECT COUNT(*) FROM ssh_workspaces WHERE serverNodeId = :serverNodeId")
     suspend fun countWorkspacesForServer(serverNodeId: Long): Int
 
+    @Query("SELECT * FROM ssh_folders ORDER BY sortOrder DESC, id DESC")
+    fun getAllFoldersFlow(): Flow<List<SshFolder>>
+
+    @Query("SELECT * FROM ssh_folders ORDER BY sortOrder DESC, id DESC")
+    suspend fun getAllFolders(): List<SshFolder>
+
+    @Query("SELECT * FROM ssh_folders WHERE id = :id LIMIT 1")
+    suspend fun getFolderById(id: Long): SshFolder?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertFolder(folder: SshFolder): Long
+
+    @Update
+    suspend fun updateFolder(folder: SshFolder)
+
+    @Query("SELECT COALESCE(MAX(sortOrder), 0) + 1 FROM ssh_folders")
+    suspend fun nextFolderSortOrder(): Int
+
+    @Transaction
+    suspend fun createFolder(name: String): Long {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) return -1L
+        val sortOrder = nextFolderSortOrder()
+        return insertFolder(
+            SshFolder(
+                id = 0L,
+                name = trimmed,
+                sortOrder = sortOrder,
+                updateTime = System.currentTimeMillis()
+            )
+        )
+    }
+
+    @Query("UPDATE ssh_folders SET name = :name, updateTime = :updateTime WHERE id = :id")
+    suspend fun renameFolder(id: Long, name: String, updateTime: Long = System.currentTimeMillis())
+
+    @Transaction
+    suspend fun deleteFolder(id: Long) {
+        deleteFolderById(id)
+        clearWorkspacesFolderId(id)
+    }
+
+    @Query("DELETE FROM ssh_folders WHERE id = :id")
+    suspend fun deleteFolderById(id: Long)
+
+    @Query("UPDATE ssh_workspaces SET folderId = NULL WHERE folderId = :folderId")
+    suspend fun clearWorkspacesFolderId(folderId: Long)
+
+    @Query("UPDATE ssh_workspaces SET folderId = :folderId, updateTime = :updateTime WHERE id = :workspaceId")
+    suspend fun setWorkspaceFolder(workspaceId: Long, folderId: Long?, updateTime: Long = System.currentTimeMillis())
+
     private suspend fun resolveServerNodeId(config: SshConfig, updateTime: Long): Long {
         val existingById = config.serverNodeId
             .takeIf { it > 0L }
@@ -280,7 +332,12 @@ interface SshConfigDao {
         )
     }
 
-    private fun SshConfig.toWorkspaceProfile(serverNodeId: Long, updateTime: Long, sortOrder: Int): SshWorkspaceProfile {
+    private fun SshConfig.toWorkspaceProfile(
+        serverNodeId: Long,
+        updateTime: Long,
+        sortOrder: Int,
+        targetFolderId: Long? = this.folderId
+    ): SshWorkspaceProfile {
         return SshWorkspaceProfile(
             id = id,
             serverNodeId = serverNodeId,
@@ -294,7 +351,8 @@ interface SshConfigDao {
             persistentSessionMode = persistentSessionMode.trim().ifBlank { PERSISTENT_SESSION_NONE },
             preConnectTunnelPresetId = preConnectTunnelPresetId,
             sortOrder = sortOrder,
-            updateTime = updateTime
+            updateTime = updateTime,
+            folderId = targetFolderId
         )
     }
 
@@ -326,7 +384,8 @@ interface SshConfigDao {
                 s.id AS serverNodeId,
                 s.sortOrder AS serverSortOrder,
                 w.sortOrder AS workspaceSortOrder,
-                (CASE WHEN s.authType = 'LOCAL' THEN 1 ELSE 0 END) AS isLocalSession
+                (CASE WHEN s.authType = 'LOCAL' THEN 1 ELSE 0 END) AS isLocalSession,
+                w.folderId AS folderId
             FROM ssh_workspaces AS w
             INNER JOIN ssh_server_nodes AS s ON s.id = w.serverNodeId
         """

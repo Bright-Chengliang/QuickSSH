@@ -28,8 +28,12 @@ data class SshConfig(
     val serverSortOrder: Int = 0,
     val workspaceSortOrder: Int = 0,
     val serverDisplayName: String? = null,
-    val isLocalSession: Boolean = false
+    val isLocalSession: Boolean = false,
+    val folderId: Long? = null
 )
+
+/** Sentinel ID representing the special pinned folder. */
+const val PINNED_FOLDER_ID: Long = -1L
 
 /** Persistent session mode: no terminal multiplexer wrapping. */
 const val PERSISTENT_SESSION_NONE = "none"
@@ -85,6 +89,17 @@ data class SshWorkspaceProfile(
     val terminalShortcuts: String? = null,
     @ColumnInfo(defaultValue = "none") val persistentSessionMode: String = PERSISTENT_SESSION_NONE,
     @ColumnInfo(defaultValue = "NULL") val preConnectTunnelPresetId: Long? = null,
+    @ColumnInfo(defaultValue = "0") val sortOrder: Int = 0,
+    val updateTime: Long = System.currentTimeMillis(),
+    @ColumnInfo(defaultValue = "NULL") val folderId: Long? = null
+)
+
+@Entity(
+    tableName = "ssh_folders"
+)
+data class SshFolder(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
     @ColumnInfo(defaultValue = "0") val sortOrder: Int = 0,
     val updateTime: Long = System.currentTimeMillis()
 )

@@ -413,6 +413,9 @@ class MainActivity : FragmentActivity() {
     private val configsFlow by lazy {
         db.sshConfigDao().getAllConfigsFlow().retryDatabaseFlow("SSH configs")
     }
+    private val foldersFlow by lazy {
+        db.sshConfigDao().getAllFoldersFlow().retryDatabaseFlow("SSH folders")
+    }
     private val tunnelPresetsFlow by lazy {
         db.sshConfigDao().getAllTunnelPresetsFlow().retryDatabaseFlow("Tunnel presets")
     }
@@ -530,6 +533,7 @@ class MainActivity : FragmentActivity() {
     @Composable
     fun AppNavigation() {
         val configs by configsFlow.collectAsState(initial = emptyList())
+        val folders by foldersFlow.collectAsState(initial = emptyList())
         val tunnelPresets by tunnelPresetsFlow.collectAsState(initial = emptyList())
         val settings = remember { getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
         val transferHistory by transferHistoryFlow.collectAsState(initial = emptyList())
@@ -1779,6 +1783,27 @@ class MainActivity : FragmentActivity() {
                         decryptedPassword = null
                         connectionTestStatus = ""
                         currentScreen = "ADD"
+                    },
+                    folders = folders,
+                    onCreateFolder = { name ->
+                        scope.launch(Dispatchers.IO) {
+                            db.sshConfigDao().createFolder(name)
+                        }
+                    },
+                    onRenameFolder = { folderId, name ->
+                        scope.launch(Dispatchers.IO) {
+                            db.sshConfigDao().renameFolder(folderId, name)
+                        }
+                    },
+                    onDeleteFolder = { folderId ->
+                        scope.launch(Dispatchers.IO) {
+                            db.sshConfigDao().deleteFolder(folderId)
+                        }
+                    },
+                    onSetWorkspaceFolder = { workspaceId, folderId ->
+                        scope.launch(Dispatchers.IO) {
+                            db.sshConfigDao().setWorkspaceFolder(workspaceId, folderId)
+                        }
                     }
                 )
 

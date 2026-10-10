@@ -212,21 +212,15 @@ private fun FeedbackIconButtonFrame(
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
-    val scale by animateFloatAsState(
-        targetValue = if (enabled && isPressed) 0.9f else 1f,
-        label = "${contentDescription}PressScale"
-    )
-    val iconTint by animateColorAsState(
-        targetValue = if (enabled && isPressed) pressedTint else tint,
-        label = "${contentDescription}PressTint"
-    )
+    val scale = if (enabled && isPressed) 0.9f else 1f
+    val currentTint = if (enabled && isPressed) pressedTint else tint
 
     IconButton(
         onClick = onClick,
         enabled = enabled,
         interactionSource = interactionSource,
-        modifier = modifier.scale(scale)
+        modifier = if (scale != 1f) modifier.scale(scale) else modifier
     ) {
-        icon(iconTint)
+        icon(currentTint)
     }
 }
