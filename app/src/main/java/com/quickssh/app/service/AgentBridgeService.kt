@@ -23,9 +23,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.BufferedReader
-import java.io.InputStreamReader
+import java.io.BufferedInputStream
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
 import java.io.OutputStreamWriter
+import java.net.BindException
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
@@ -62,6 +64,17 @@ object AgentBridgeService {
     const val PREFS_KEY_BRIDGE_ENABLED = "agent_bridge_enabled"
     const val PREFS_KEY_BRIDGE_PORT = "agent_bridge_port"
     const val PREFS_KEY_TERMUX_SSH_PORT = "termux_ssh_port"
+    private const val MAX_REQUEST_BODY_BYTES = 16 * 1024 * 1024
+
+    private fun settings(context: Context) =
+        context.applicationContext.getSharedPreferences(KnownHostsVerifier.SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+
+    /** Bridge port saved in Settings (falls back to the default when never configured). */
+    fun configuredBridgePort(context: Context): Int =
+        settings(context).getInt(PREFS_KEY_BRIDGE_PORT, DEFAULT_BRIDGE_PORT)
+
+    fun isBridgeEnabled(context: Context): Boolean =
+        settings(context).getBoolean(PREFS_KEY_BRIDGE_ENABLED, false)
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var serverSocket: ServerSocket? = null
@@ -86,6 +99,12 @@ object AgentBridgeService {
 
     @Synchronized
     fun start(context: Context, bridgePort: Int = DEFAULT_BRIDGE_PORT, termuxSshPort: Int = DEFAULT_TERMUX_SSH_PORT): Boolean {
+        val current = _state.value
+        if (serverSocket?.isClosed == false && current.status == AgentBridgeStatus.RUNNING &&
+            current.bridgePort == bridgePort && current.termuxSshPort == termuxSshPort
+        ) {
+            return true
+        }
         stop()
 
         if (bridgePort !in 1024..65535) {
@@ -98,16 +117,6 @@ object AgentBridgeService {
             return false
         }
 
-        if (!isPortAvailable(bridgePort)) {
-            _state.value = AgentBridgeState(
-                status = AgentBridgeStatus.PORT_OCCUPIED,
-                bridgePort = bridgePort,
-                termuxSshPort = termuxSshPort,
-                errorMessage = "本地网关端口 $bridgePort 已被占用，请自定义更换为其他端口"
-            )
-            return false
-        }
-
         _state.value = AgentBridgeState(
             status = AgentBridgeStatus.STARTING,
             bridgePort = bridgePort,
@@ -115,7 +124,24 @@ object AgentBridgeService {
         )
 
         return try {
-            val server = ServerSocket(bridgePort, 10, InetAddress.getByName("127.0.0.1"))
+            // Bind directly instead of probing with isPortAvailable(): after a restart (e.g. Activity
+            // recreation calls stop() then start()) the connections this bridge just served linger in
+            // TIME_WAIT, which fails a reuseAddress=false probe even though the port is free. SO_REUSEADDR
+            // still refuses a port another process is actively listening on.
+            val server = try {
+                ServerSocket().apply {
+                    reuseAddress = true
+                    bind(InetSocketAddress(InetAddress.getByName("127.0.0.1"), bridgePort), 10)
+                }
+            } catch (_: BindException) {
+                _state.value = AgentBridgeState(
+                    status = AgentBridgeStatus.PORT_OCCUPIED,
+                    bridgePort = bridgePort,
+                    termuxSshPort = termuxSshPort,
+                    errorMessage = "本地网关端口 $bridgePort 已被占用，请自定义更换为其他端口"
+                )
+                return false
+            }
             serverSocket = server
             val appContext = context.applicationContext
 
@@ -166,35 +192,8 @@ object AgentBridgeService {
     ) = withContext(Dispatchers.IO) {
         socket.use { s ->
             try {
-                val reader = BufferedReader(InputStreamReader(s.getInputStream(), StandardCharsets.UTF_8))
-                val requestLine = reader.readLine() ?: return@use
-                val parts = requestLine.split(" ")
-                val method = parts.getOrNull(0)?.uppercase() ?: "GET"
-                val rawPath = parts.getOrNull(1) ?: "/"
-
-                // Read headers
-                var contentLength = 0
-                while (true) {
-                    val line = reader.readLine() ?: break
-                    if (line.isEmpty()) break
-                    if (line.startsWith("Content-Length:", ignoreCase = true)) {
-                        contentLength = line.substringAfter(":").trim().toIntOrNull() ?: 0
-                    }
-                }
-
-                // Read body if any
-                val body = if (contentLength > 0) {
-                    val charArray = CharArray(contentLength)
-                    var readTotal = 0
-                    while (readTotal < contentLength) {
-                        val count = reader.read(charArray, readTotal, contentLength - readTotal)
-                        if (count < 0) break
-                        readTotal += count
-                    }
-                    String(charArray, 0, readTotal)
-                } else ""
-
-                val response = handleRoute(context, method, rawPath, body, bridgePort, termuxSshPort)
+                val request = readRequest(BufferedInputStream(s.getInputStream())) ?: return@use
+                val response = handleRoute(context, request.method, request.rawPath, request.body, bridgePort, termuxSshPort)
                 val writer = OutputStreamWriter(s.getOutputStream(), StandardCharsets.UTF_8)
                 writer.write("HTTP/1.1 ${response.statusCode} ${response.statusText}\r\n")
                 writer.write("Content-Type: ${response.contentType}\r\n")
@@ -207,6 +206,53 @@ object AgentBridgeService {
                 writer.flush()
             } catch (_: Exception) {}
         }
+    }
+
+    internal data class BridgeRequest(val method: String, val rawPath: String, val body: String)
+
+    /**
+     * Parses one HTTP/1.x request from raw bytes. Content-Length counts bytes, so the body must be
+     * read as bytes and decoded afterwards; reading it as chars over-reads any multi-byte UTF-8 body
+     * and blocks until the client gives up.
+     */
+    internal fun readRequest(input: InputStream): BridgeRequest? {
+        val requestLine = readHeaderLine(input) ?: return null
+        val parts = requestLine.split(" ")
+        val method = parts.getOrNull(0)?.uppercase() ?: "GET"
+        val rawPath = parts.getOrNull(1) ?: "/"
+
+        var contentLength = 0
+        while (true) {
+            val line = readHeaderLine(input) ?: break
+            if (line.isEmpty()) break
+            if (line.startsWith("Content-Length:", ignoreCase = true)) {
+                contentLength = line.substringAfter(":").trim().toIntOrNull() ?: 0
+            }
+        }
+        contentLength = contentLength.coerceIn(0, MAX_REQUEST_BODY_BYTES)
+
+        val bytes = ByteArray(contentLength)
+        var readTotal = 0
+        while (readTotal < contentLength) {
+            val count = input.read(bytes, readTotal, contentLength - readTotal)
+            if (count < 0) break
+            readTotal += count
+        }
+        return BridgeRequest(method, rawPath, String(bytes, 0, readTotal, StandardCharsets.UTF_8))
+    }
+
+    private fun readHeaderLine(input: InputStream): String? {
+        val line = ByteArrayOutputStream()
+        while (true) {
+            val b = input.read()
+            if (b < 0) {
+                if (line.size() == 0) return null
+                break
+            }
+            if (b == '\n'.code) break
+            line.write(b)
+        }
+        return line.toString(StandardCharsets.UTF_8.name()).trimEnd('\r')
     }
 
     private data class HttpResponse(

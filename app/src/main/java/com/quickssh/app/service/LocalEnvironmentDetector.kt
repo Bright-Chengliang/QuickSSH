@@ -118,6 +118,14 @@ object LocalEnvironmentDetector {
 
         // Install built-in opencode launcher & CLI proxy script
         val opencodeScript = File(binDir, "opencode")
+        val bridgePort = runCatching { AgentBridgeService.configuredBridgePort(context) }
+            .getOrDefault(AgentBridgeService.DEFAULT_BRIDGE_PORT)
+        val bridgeEnabled = runCatching { AgentBridgeService.isBridgeEnabled(context) }.getOrDefault(false)
+        val bridgeTip = if (bridgeEnabled) {
+            "Tip: QuickSSH Agent Bridge is active on 127.0.0.1:$bridgePort."
+        } else {
+            "Tip: enable Settings > Termux & Agent Gateway to start the bridge on 127.0.0.1:$bridgePort."
+        }
         try {
             opencodeScript.writeText(
                 """
@@ -157,9 +165,9 @@ object LocalEnvironmentDetector {
                 echo ""
                 echo "To link opencode with Termux runtime or install opencode CLI:"
                 echo "  1. In Termux, run: pkg install nodejs-lts && npm install -g opencode"
-                echo "  2. Or run: curl -s http://127.0.0.1:22022/install.sh | bash"
+                echo "  2. Or run: curl -s http://127.0.0.1:$bridgePort/install.sh | bash"
                 echo ""
-                echo "Tip: QuickSSH Agent Bridge is active on 127.0.0.1:22022."
+                echo "$bridgeTip"
                 echo "\033[1;36m================================================================\033[0m"
                 exit 0
                 """.trimIndent() + "\n"
@@ -294,6 +302,7 @@ object LocalEnvironmentDetector {
             envMap["COLORTERM"] = "truecolor"
             envMap["LANG"] = "en_US.UTF-8"
             envMap["ENV"] = "$homeDir/.profile"
+            envMap.putAll(androidRuntimeEnvironment())
             envMap["PS1"] = "\u001B[1;32mquickssh\u001B[0m:\u001B[1;34m\\w\u001B[0m\\$ "
 
             val resolvedWorkDir = resolveWorkingDir(preferredWorkDir, homeDir, context)
@@ -339,6 +348,7 @@ object LocalEnvironmentDetector {
             }
 
             val envMap = mutableMapOf<String, String>()
+            envMap.putAll(androidRuntimeEnvironment())
             envMap["PREFIX"] = TERMUX_PREFIX
             envMap["PATH"] = "$TERMUX_PREFIX/bin:$TERMUX_PREFIX/bin/applets:/system/bin:/system/xbin"
             envMap["LD_LIBRARY_PATH"] = TERMUX_LIB
@@ -374,6 +384,7 @@ object LocalEnvironmentDetector {
             val envMap = mutableMapOf<String, String>()
             envMap["HOME"] = homeDir
             envMap["TMPDIR"] = tmpDir
+            envMap.putAll(androidRuntimeEnvironment())
             val systemPath = System.getenv("PATH") ?: "/system/bin:/system/xbin"
             envMap["PATH"] = if (binDir.exists()) "${binDir.absolutePath}:$systemPath" else systemPath
             envMap["TERM"] = term.ifBlank { DEFAULT_TERM }
@@ -393,6 +404,22 @@ object LocalEnvironmentDetector {
                 args = emptyArray()
             )
         }
+    }
+
+    /**
+     * Android runtime variables that bionic and toolbox binaries expect (tzdata lookup prints
+     * "ANDROID_DATA not set" without them). Native PTY sessions start from an empty environment,
+     * so they are copied from the app process with the platform defaults as fallback.
+     */
+    internal fun androidRuntimeEnvironment(getenv: (String) -> String? = System::getenv): Map<String, String> {
+        val env = mutableMapOf(
+            "ANDROID_DATA" to (getenv("ANDROID_DATA") ?: "/data"),
+            "ANDROID_ROOT" to (getenv("ANDROID_ROOT") ?: "/system")
+        )
+        for (key in listOf("ANDROID_ART_ROOT", "ANDROID_I18N_ROOT", "ANDROID_TZDATA_ROOT", "ANDROID_STORAGE")) {
+            getenv(key)?.takeIf { it.isNotBlank() }?.let { env[key] = it }
+        }
+        return env
     }
 
     private fun resolveWorkingDir(preferred: String?, defaultHome: String, context: Context): String {

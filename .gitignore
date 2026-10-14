@@ -44,3 +44,4 @@ window.xml
 opencode.json
 opencode.json.backup.*
 .kiro/settings/mcp.json
+.mcp.json

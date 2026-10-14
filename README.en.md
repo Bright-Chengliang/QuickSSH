@@ -92,7 +92,7 @@ Mobile terminal tools often force a choice between a standalone local terminal (
 **Implementation:**
 - **Built-in `opencode` Launcher**: The local sandbox environment bundles an `opencode` launcher script and `ai` alias, linking with global Termux / Node.js runtimes and QuickSSH Agent Gateway out of the box.
 - **Auto-run Startup Profile**: Configurable via Settings ("Run Profile on Local Terminal Startup", enabled by default). Automatically creates and sources `~/.quickssh_profile` (or `~/.profile`), setting up `PATH`, `TERM=xterm-256color`, truecolor support, and productivity aliases (`ll`, `la`, `cls`, `ai`).
-- **Termux & QuickSSH Agent Bridge (`AgentBridgeService`)**: Provides a lightweight local loopback REST API on `127.0.0.1:22022` with a one-click Termux setup script (`curl -s http://127.0.0.1:22022/install.sh | bash`), allowing Termux to query server configs, discover hosts, and execute terminal commands.
+- **Termux & QuickSSH Agent Bridge (`AgentBridgeService`)**: Once enabled in Settings, provides a lightweight local loopback REST API on `127.0.0.1:8024` (default port, configurable in Settings) with a one-click Termux setup script (`curl -s http://127.0.0.1:8024/install.sh | bash`), allowing Termux to query server configs, discover hosts, and execute terminal commands.
 - **SSH Devices & Hostname Overview**: Automatically aggregates hosts from the QuickSSH database, Termux `~/.ssh/config`, and `~/.ssh/known_hosts`, with instant search, copy host/command, and direct import.
 
 ## Architecture

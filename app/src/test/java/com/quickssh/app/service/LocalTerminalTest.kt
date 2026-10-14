@@ -134,4 +134,44 @@ class LocalTerminalTest {
         helper.disconnect()
         assertEquals(SshSessionStatus.DISCONNECTED, helper.status.value)
     }
+
+    @Test
+    fun androidRuntimeEnvironmentFallsBackToPlatformDefaults() {
+        val env = LocalEnvironmentDetector.androidRuntimeEnvironment { null }
+
+        assertEquals("/data", env["ANDROID_DATA"])
+        assertEquals("/system", env["ANDROID_ROOT"])
+        assertFalse(env.containsKey("ANDROID_TZDATA_ROOT"))
+    }
+
+    @Test
+    fun androidRuntimeEnvironmentCopiesProcessValues() {
+        val process = mapOf(
+            "ANDROID_DATA" to "/data2",
+            "ANDROID_ROOT" to "/system2",
+            "ANDROID_TZDATA_ROOT" to "/apex/com.android.tzdata"
+        )
+        val env = LocalEnvironmentDetector.androidRuntimeEnvironment { process[it] }
+
+        assertEquals("/data2", env["ANDROID_DATA"])
+        assertEquals("/system2", env["ANDROID_ROOT"])
+        assertEquals("/apex/com.android.tzdata", env["ANDROID_TZDATA_ROOT"])
+    }
+
+    @Test
+    fun localEnvironmentDetectorExportsAndroidRuntimeVariables() {
+        val filesDir = tempFolder.newFolder("filesDir3")
+        val cacheDir = tempFolder.newFolder("cacheDir3")
+        val detected = LocalEnvironmentDetector.detect(
+            context = object : android.content.ContextWrapper(null) {
+                override fun getFilesDir(): File = filesDir
+                override fun getCacheDir(): File = cacheDir
+            },
+            preferredShellPath = null,
+            preferredWorkDir = null
+        )
+
+        assertTrue(detected.environment.containsKey("ANDROID_DATA"))
+        assertTrue(detected.environment.containsKey("ANDROID_ROOT"))
+    }
 }

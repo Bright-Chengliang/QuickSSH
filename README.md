@@ -94,7 +94,7 @@ Developed by [Bright-Chengliang](https://github.com/Bright-Chengliang) · © 202
 **具体实现：** 
 - **内置 `opencode` 启动器**：本地沙盒环境预置 `opencode` 启动代理与 `ai` 别名，自动检测并联动 Termux/Node 全局环境与 QuickSSH Agent 网关，实现开箱即用的 AI 辅助编程能力。
 - **默认启动加载 Profile 脚本**：设置中提供「本地终端启动执行 Profile」选项（默认开启），本地终端初始化时自动创建并执行 `~/.quickssh_profile`（或 `~/.profile`），预设 `PATH`、`TERM=xterm-256color`、真彩支持及实用别名（`ll`, `la`, `cls`, `ai`）。
-- **Termux & QuickSSH Agent 网关 (`AgentBridgeService`)**：在本地回环 `127.0.0.1:22022` 提供极简 RESTful API 与 Termux CLI 一键安装脚本（`curl -s http://127.0.0.1:22022/install.sh | bash`），支持从 Termux 无缝查询配置、聚合主机与执行终端指令。
+- **Termux & QuickSSH Agent 网关 (`AgentBridgeService`)**：在设置中开启后，于本地回环 `127.0.0.1:8024`（默认端口，可在设置中修改）提供极简 RESTful API 与 Termux CLI 一键安装脚本（`curl -s http://127.0.0.1:8024/install.sh | bash`），支持从 Termux 无缝查询配置、聚合主机与执行终端指令。
 - **SSH 目标与 Hostname 聚合一览**：自动跨数据源扫描 QuickSSH 数据库、Termux `~/.ssh/config` 及 `~/.ssh/known_hosts`，在服务器列表提供一键搜索、复制 Hostname、复制 SSH 连接命令及一键导入直连。
 
 ## 架构概览
