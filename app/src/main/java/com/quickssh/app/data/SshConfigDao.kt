@@ -211,6 +211,18 @@ interface SshConfigDao {
     @Query("SELECT COUNT(*) FROM ssh_workspaces WHERE serverNodeId = :serverNodeId")
     suspend fun countWorkspacesForServer(serverNodeId: Long): Int
 
+    @Query("SELECT * FROM ssh_server_nodes ORDER BY sortOrder DESC, id DESC")
+    suspend fun getAllServerNodes(): List<SshServerNode>
+
+    @Query("SELECT * FROM ssh_workspaces ORDER BY sortOrder DESC, id DESC")
+    suspend fun getAllWorkspaces(): List<SshWorkspaceProfile>
+
+    @Query("DELETE FROM ssh_tunnel_presets WHERE workspaceId = :workspaceId")
+    suspend fun deleteTunnelPresetsForWorkspace(workspaceId: Long)
+
+    @Query("UPDATE ssh_workspaces SET preConnectTunnelPresetId = NULL WHERE preConnectTunnelPresetId = :presetId")
+    suspend fun clearPreConnectTunnelReferences(presetId: Long)
+
     @Query("SELECT * FROM ssh_folders ORDER BY sortOrder DESC, id DESC")
     fun getAllFoldersFlow(): Flow<List<SshFolder>>
 

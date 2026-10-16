@@ -159,6 +159,20 @@ class LocalTerminalTest {
     }
 
     @Test
+    fun builtinProfileGivesMkshAPromptWithoutBashEscapes() {
+        val profile = LocalEnvironmentDetector.builtinProfileScript("/app/bin:/system/bin", "/app/home")
+        val lines = profile.lines()
+        val mkshPrompt = lines[lines.indexOfFirst { it.contains("KSH_VERSION") } + 1]
+
+        assertTrue(mkshPrompt, mkshPrompt.contains("\${PWD/#\$HOME/\\~}"))
+        assertTrue(mkshPrompt, mkshPrompt.contains("\\001\\r\\001"))
+        assertFalse(mkshPrompt, mkshPrompt.contains("\\["))
+        assertFalse(mkshPrompt, mkshPrompt.contains("\\w"))
+        assertTrue(profile.contains("PS1='\\[\\033[01;32m\\]quickssh"))
+        assertTrue(profile.contains("export HOME=\"/app/home\""))
+    }
+
+    @Test
     fun localEnvironmentDetectorExportsAndroidRuntimeVariables() {
         val filesDir = tempFolder.newFolder("filesDir3")
         val cacheDir = tempFolder.newFolder("cacheDir3")

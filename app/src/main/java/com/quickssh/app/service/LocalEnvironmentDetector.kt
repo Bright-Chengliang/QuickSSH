@@ -168,12 +168,17 @@ object LocalEnvironmentDetector {
                 echo "  2. Or run: curl -s http://127.0.0.1:$bridgePort/install.sh | bash"
                 echo ""
                 echo "$bridgeTip"
+                echo "Agents manage QuickSSH hosts/workspaces via 'quickssh' (skill: ~/${AgentToolkit.SKILL_HOME_PATH})"
+                echo "or the 'quickssh' MCP server (http://127.0.0.1:$bridgePort/mcp, registered in ~/${AgentToolkit.OPENCODE_CONFIG_HOME_PATH})."
                 echo "\033[1;36m================================================================\033[0m"
                 exit 0
                 """.trimIndent() + "\n"
             )
             opencodeScript.setExecutable(true, false)
         } catch (_: Exception) {}
+
+        // `quickssh` CLI, bridge token env and the quickssh-workspace skill for agents run from this terminal.
+        AgentToolkit.installLocalToolkit(context, binDir)
 
         val nativeLibDir = runCatching { context.applicationInfo?.nativeLibraryDir }.getOrNull() ?: ""
         val profileFile = File(context.filesDir, ".profile")
@@ -183,22 +188,33 @@ object LocalEnvironmentDetector {
             "${binDir.absolutePath}:/system/bin:/system/xbin"
         }
         try {
-            profileFile.writeText(
-                """
-                export PATH="$pathValue"
-                export PS1='\[\033[01;32m\]quickssh\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
-                export TERM=xterm-256color
-                export COLORTERM=truecolor
-                export HOME="${context.filesDir.absolutePath}"
-                alias ls='ls --color=auto'
-                alias ll='ls -la --color=auto'
-                alias grep='grep --color=auto'
-                """.trimIndent() + "\n"
-            )
+            profileFile.writeText(builtinProfileScript(pathValue, context.filesDir.absolutePath))
         } catch (_: Exception) {}
 
         return binDir
     }
+
+    /**
+     * ~/.profile shared by the BusyBox ash and Android system shell (mksh) sessions. mksh does not
+     * understand bash prompt escapes (\[ \] \w) and would print them literally, so it gets a prompt
+     * that uses $PWD and mksh's "\001\r" non-printing delimiter instead.
+     */
+    internal fun builtinProfileScript(pathValue: String, homeDir: String): String =
+        """
+        export PATH="$pathValue"
+        if [ -n "${'$'}KSH_VERSION" ]; then
+            PS1="$(printf '\001\r\001\033[01;32m\001')quickssh$(printf '\001\033[00m\001'):$(printf '\001\033[01;34m\001')"'${'$'}{PWD/#${'$'}HOME/\~}'"$(printf '\001\033[00m\001')"'$ '
+        else
+            PS1='\[\033[01;32m\]quickssh\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
+        fi
+        export PS1
+        export TERM=xterm-256color
+        export COLORTERM=truecolor
+        export HOME="$homeDir"
+        alias ls='ls --color=auto'
+        alias ll='ls -la --color=auto'
+        alias grep='grep --color=auto'
+        """.trimIndent() + "\n"
 
     fun isTermuxInstalled(): Boolean {
         val bashFile = File(TERMUX_BASH)

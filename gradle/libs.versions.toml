@@ -7,6 +7,7 @@ activityCompose = "1.8.2"
 composeBom = "2023.10.01"
 room = "2.6.1"
 sshj = "0.38.0"
+apacheSshd = "2.14.0"
 biometric = "1.1.0"
 
 [libraries]
@@ -31,6 +32,7 @@ androidx-biometric = { group = "androidx.biometric", name = "biometric", version
 
 # Network & SSHj
 sshj = { group = "com.hierynomus", name = "sshj", version.ref = "sshj" }
+apache-sshd-core = { group = "org.apache.sshd", name = "sshd-core", version.ref = "apacheSshd" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

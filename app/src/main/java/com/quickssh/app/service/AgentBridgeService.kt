@@ -1,13 +1,18 @@
 package com.quickssh.app.service
 
 import android.content.Context
+import androidx.room.withTransaction
+import com.quickssh.app.BuildConfig
 import com.quickssh.app.data.AppDatabase
+import com.quickssh.app.data.InMemoryWorkspaceStore
 import com.quickssh.app.data.PERSISTENT_SESSION_NONE
+import com.quickssh.app.data.RoomWorkspaceStore
 import com.quickssh.app.data.SshConfig
 import com.quickssh.app.data.SshConfigBackupCodec
 import com.quickssh.app.data.SshConfigBackupRecord
 import com.quickssh.app.data.SshTunnelPreset
 import com.quickssh.app.data.SshTunnelPresetBackupRecord
+import com.quickssh.app.data.snapshot
 import com.quickssh.app.data.tunnelPresetDefaultName
 import com.quickssh.app.security.KeystoreManager
 import com.quickssh.app.utils.SshHostDiscoveryHelper
@@ -22,6 +27,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
+import org.json.JSONException
 import org.json.JSONObject
 import java.io.BufferedInputStream
 import java.io.ByteArrayOutputStream
@@ -34,6 +40,8 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
+import java.security.SecureRandom
 
 enum class AgentBridgeStatus {
     STOPPED,
@@ -55,8 +63,11 @@ data class AgentBridgeState(
 
 /**
  * Lightweight loopback-only (127.0.0.1) Agent Bridge HTTP service.
- * Enables AI Agents, CLI scripts, and remote terminals to seamlessly
- * view, export, import, create, and manage QuickSSH connection configs.
+ * Enables AI Agents, CLI scripts, and remote terminals to view and manage QuickSSH
+ * configuration: the structured `/api/v2` workspace API ([WorkspaceConfigApi]) plus the
+ * legacy flat `/api/configs` endpoints. Every route except `/api/status` requires the bridge
+ * token, because the bridge can export stored credentials and run commands in the app sandbox,
+ * and any app or web page on the device can reach 127.0.0.1.
  */
 object AgentBridgeService {
     const val DEFAULT_BRIDGE_PORT = 8024
@@ -64,6 +75,7 @@ object AgentBridgeService {
     const val PREFS_KEY_BRIDGE_ENABLED = "agent_bridge_enabled"
     const val PREFS_KEY_BRIDGE_PORT = "agent_bridge_port"
     const val PREFS_KEY_TERMUX_SSH_PORT = "termux_ssh_port"
+    const val PREFS_KEY_BRIDGE_TOKEN = "agent_bridge_token"
     private const val MAX_REQUEST_BODY_BYTES = 16 * 1024 * 1024
 
     private fun settings(context: Context) =
@@ -75,6 +87,41 @@ object AgentBridgeService {
 
     fun isBridgeEnabled(context: Context): Boolean =
         settings(context).getBoolean(PREFS_KEY_BRIDGE_ENABLED, false)
+
+    /** Bearer token clients must present; generated on first use. */
+    @Synchronized
+    fun bridgeToken(context: Context): String =
+        settings(context).getString(PREFS_KEY_BRIDGE_TOKEN, null)?.takeIf { it.length >= 32 }
+            ?: regenerateBridgeToken(context)
+
+    /** Replaces the token (revoking every installed client) and refreshes the in-app CLI env file. */
+    @Synchronized
+    fun regenerateBridgeToken(context: Context): String {
+        val token = newToken()
+        settings(context).edit().putString(PREFS_KEY_BRIDGE_TOKEN, token).commit()
+        runCatching { AgentToolkit.writeLocalBridgeEnv(context, configuredBridgePort(context), token) }
+        return token
+    }
+
+    internal fun newToken(): String {
+        val bytes = ByteArray(24)
+        SecureRandom().nextBytes(bytes)
+        return bytes.joinToString("") { "%02x".format(it) }
+    }
+
+    /** Accepts `Authorization: Bearer <t>`, `X-QuickSSH-Token: <t>` or `?token=<t>`, compared in constant time. */
+    internal fun isAuthorized(request: BridgeRequest, expectedToken: String): Boolean {
+        if (expectedToken.isEmpty()) return false
+        val presented = request.headers["authorization"]?.trim()
+            ?.takeIf { it.startsWith("Bearer ", ignoreCase = true) }?.substring(7)?.trim()
+            ?: request.headers["x-quickssh-token"]?.trim()
+            ?: parseQueryString(request.rawPath.substringAfter("?", ""))["token"]
+            ?: return false
+        return MessageDigest.isEqual(
+            presented.toByteArray(StandardCharsets.UTF_8),
+            expectedToken.toByteArray(StandardCharsets.UTF_8)
+        )
+    }
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var serverSocket: ServerSocket? = null
@@ -144,6 +191,8 @@ object AgentBridgeService {
             }
             serverSocket = server
             val appContext = context.applicationContext
+            // Keep the in-app CLI pointed at the port actually served.
+            runCatching { AgentToolkit.writeLocalBridgeEnv(appContext, bridgePort, bridgeToken(appContext)) }
 
             serverJob = scope.launch {
                 _state.value = AgentBridgeState(
@@ -193,22 +242,34 @@ object AgentBridgeService {
         socket.use { s ->
             try {
                 val request = readRequest(BufferedInputStream(s.getInputStream())) ?: return@use
-                val response = handleRoute(context, request.method, request.rawPath, request.body, bridgePort, termuxSshPort)
+                val response = handleRoute(context, request, bridgePort, termuxSshPort)
                 val writer = OutputStreamWriter(s.getOutputStream(), StandardCharsets.UTF_8)
                 writer.write("HTTP/1.1 ${response.statusCode} ${response.statusText}\r\n")
+                // No CORS headers on purpose: browser pages must not read bridge responses.
                 writer.write("Content-Type: ${response.contentType}\r\n")
-                writer.write("Access-Control-Allow-Origin: *\r\n")
-                writer.write("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS\r\n")
-                writer.write("Access-Control-Allow-Headers: *\r\n")
-                writer.write("Content-Length: ${response.body.toByteArray(StandardCharsets.UTF_8).size}\r\n")
+                // JSON ends with a newline so CLI output does not run into the shell prompt.
+                val payload = if (response.contentType.startsWith("application/json") && response.body.isNotEmpty() &&
+                    !response.body.endsWith("\n")
+                ) {
+                    response.body + "\n"
+                } else {
+                    response.body
+                }
+                writer.write("Content-Length: ${payload.toByteArray(StandardCharsets.UTF_8).size}\r\n")
                 writer.write("Connection: close\r\n\r\n")
-                writer.write(response.body)
+                writer.write(payload)
                 writer.flush()
             } catch (_: Exception) {}
         }
     }
 
-    internal data class BridgeRequest(val method: String, val rawPath: String, val body: String)
+    internal data class BridgeRequest(
+        val method: String,
+        val rawPath: String,
+        val body: String,
+        /** Header names are lower-cased. */
+        val headers: Map<String, String> = emptyMap()
+    )
 
     /**
      * Parses one HTTP/1.x request from raw bytes. Content-Length counts bytes, so the body must be
@@ -221,15 +282,16 @@ object AgentBridgeService {
         val method = parts.getOrNull(0)?.uppercase() ?: "GET"
         val rawPath = parts.getOrNull(1) ?: "/"
 
-        var contentLength = 0
+        val headers = mutableMapOf<String, String>()
         while (true) {
             val line = readHeaderLine(input) ?: break
             if (line.isEmpty()) break
-            if (line.startsWith("Content-Length:", ignoreCase = true)) {
-                contentLength = line.substringAfter(":").trim().toIntOrNull() ?: 0
+            val separator = line.indexOf(':')
+            if (separator > 0) {
+                headers[line.substring(0, separator).trim().lowercase()] = line.substring(separator + 1).trim()
             }
         }
-        contentLength = contentLength.coerceIn(0, MAX_REQUEST_BODY_BYTES)
+        val contentLength = (headers["content-length"]?.toIntOrNull() ?: 0).coerceIn(0, MAX_REQUEST_BODY_BYTES)
 
         val bytes = ByteArray(contentLength)
         var readTotal = 0
@@ -238,7 +300,7 @@ object AgentBridgeService {
             if (count < 0) break
             readTotal += count
         }
-        return BridgeRequest(method, rawPath, String(bytes, 0, readTotal, StandardCharsets.UTF_8))
+        return BridgeRequest(method, rawPath, String(bytes, 0, readTotal, StandardCharsets.UTF_8), headers)
     }
 
     private fun readHeaderLine(input: InputStream): String? {
@@ -255,40 +317,55 @@ object AgentBridgeService {
         return line.toString(StandardCharsets.UTF_8.name()).trimEnd('\r')
     }
 
-    private data class HttpResponse(
+    internal data class HttpResponse(
         val statusCode: Int = 200,
         val statusText: String = "OK",
         val contentType: String = "application/json; charset=utf-8",
         val body: String
     )
 
-    private suspend fun handleRoute(
+    internal suspend fun handleRoute(
         context: Context,
-        method: String,
-        rawPath: String,
-        body: String,
+        request: BridgeRequest,
         bridgePort: Int,
         termuxSshPort: Int
     ): HttpResponse {
-        if (method == "OPTIONS") {
-            return HttpResponse(body = "")
+        val method = request.method
+        val body = request.body
+        val cleanPath = request.rawPath.substringBefore("?")
+        val queryParams = parseQueryString(request.rawPath.substringAfter("?", ""))
+
+        if (cleanPath == "/api/status") {
+            val json = JSONObject().apply {
+                put("app", "QuickSSH")
+                put("status", "running")
+                put("apiVersion", 2)
+                put("authRequired", true)
+                put("mcp", "/mcp")
+                put("bridgePort", bridgePort)
+                put("termuxSshPort", termuxSshPort)
+                put("timestamp", System.currentTimeMillis())
+            }
+            return HttpResponse(body = json.toString())
         }
 
-        val cleanPath = rawPath.substringBefore("?")
-        val queryString = rawPath.substringAfter("?", "")
-        val queryParams = parseQueryString(queryString)
+        val token = runCatching { bridgeToken(context) }.getOrDefault("")
+        if (!isAuthorized(request, token)) {
+            return HttpResponse(
+                statusCode = 401,
+                statusText = "Unauthorized",
+                body = JSONObject()
+                    .put("ok", false)
+                    .put("error", "Unauthorized: send the bridge token as 'Authorization: Bearer <token>' (QuickSSH Settings > Termux & Agent gateway)")
+                    .toString()
+            )
+        }
 
         return when {
-            cleanPath == "/api/status" -> {
-                val json = JSONObject().apply {
-                    put("app", "QuickSSH")
-                    put("status", "running")
-                    put("bridgePort", bridgePort)
-                    put("termuxSshPort", termuxSshPort)
-                    put("timestamp", System.currentTimeMillis())
-                }
-                HttpResponse(body = json.toString())
-            }
+            cleanPath == "/mcp" -> handleMcp(context, request)
+
+            cleanPath.startsWith("/api/v2/") ->
+                handleWorkspaceApi(context, method, cleanPath.removePrefix("/api/v2/"), queryParams, body)
 
             cleanPath == "/api/configs" && method == "GET" -> {
                 val db = AppDatabase.getDatabase(context)
@@ -346,13 +423,7 @@ object AgentBridgeService {
                 }
             }
 
-            cleanPath == "/api/devices" -> {
-                val db = AppDatabase.getDatabase(context)
-                val configs = db.sshConfigDao().getAllConfigs()
-                val devices = SshHostDiscoveryHelper.aggregateHosts(configs)
-                val json = SshHostDiscoveryHelper.toJson(devices)
-                HttpResponse(body = json)
-            }
+            cleanPath == "/api/devices" -> HttpResponse(body = devicesJson(context))
 
             cleanPath == "/api/terminal/exec" -> {
                 val cmd = if (body.startsWith("{")) {
@@ -370,7 +441,13 @@ object AgentBridgeService {
             }
 
             cleanPath == "/install.sh" -> {
-                val script = generateTermuxInstallerScript(bridgePort, termuxSshPort)
+                val cli = AgentToolkit.cliScript(
+                    template = AgentToolkit.cliTemplate(context),
+                    shebang = AgentToolkit.TERMUX_SHELL,
+                    envFile = "\$HOME/${AgentToolkit.ENV_HOME_PATH}",
+                    bridgePort = bridgePort
+                )
+                val script = generateTermuxInstallerScript(bridgePort, termuxSshPort, token, cli)
                 HttpResponse(
                     contentType = "text/x-shellscript; charset=utf-8",
                     body = script
@@ -382,6 +459,107 @@ object AgentBridgeService {
                 statusText = "Not Found",
                 body = """{"error":"Endpoint not found: $cleanPath"}"""
             )
+        }
+    }
+
+    /**
+     * `/api/v2` workspace API. Responses are always HTTP 200 with `{"ok":true,"data":...}` or
+     * `{"ok":false,"error":...}` so wget-based clients (which drop non-2xx bodies) still see errors.
+     * Writes run in one Room transaction; `apply?dryRun=1` runs on an in-memory copy instead.
+     */
+    private suspend fun handleWorkspaceApi(
+        context: Context,
+        method: String,
+        path: String,
+        queryParams: Map<String, String>,
+        body: String
+    ): HttpResponse = withContext(Dispatchers.IO) {
+        val db = AppDatabase.getDatabase(context)
+        fun api(store: com.quickssh.app.data.WorkspaceStore) =
+            WorkspaceConfigApi(store, KeystoreManager::encrypt, KeystoreManager::decrypt)
+
+        fun flag(name: String) = queryParams[name]?.lowercase() in setOf("1", "true", "yes")
+
+        try {
+            if (path == "skill" && method == "GET") {
+                return@withContext HttpResponse(
+                    contentType = "text/markdown; charset=utf-8",
+                    body = AgentToolkit.skillMarkdown(context)
+                )
+            }
+            val data: JSONObject = when {
+                path == "tree" && method == "GET" -> api(RoomWorkspaceStore(db.sshConfigDao())).tree()
+                path == "export" && method == "GET" -> api(RoomWorkspaceStore(db.sshConfigDao())).exportDocument()
+                path == "apply" && method == "POST" -> {
+                    val document = parseJsonObject(body)
+                    val prune = flag("prune")
+                    if (flag("dryRun")) {
+                        val copy = InMemoryWorkspaceStore(RoomWorkspaceStore(db.sshConfigDao()).snapshot())
+                        api(copy).apply(document, prune).put("dryRun", true)
+                    } else {
+                        db.withTransaction { api(RoomWorkspaceStore(db.sshConfigDao())).apply(document, prune) }
+                            .put("dryRun", false)
+                    }
+                }
+                method == "POST" && path.count { it == '/' } == 1 -> {
+                    val request = parseJsonObject(body)
+                    db.withTransaction { api(RoomWorkspaceStore(db.sshConfigDao())).call(path, request) }
+                }
+                else -> throw WorkspaceApiException(
+                    "Unknown endpoint $method /api/v2/$path. GET tree|export|skill, POST apply or <resource>/<action>"
+                )
+            }
+            HttpResponse(body = JSONObject().put("ok", true).put("data", data).toString(2))
+        } catch (e: WorkspaceApiException) {
+            HttpResponse(body = JSONObject().put("ok", false).put("error", e.message).toString())
+        } catch (e: Exception) {
+            HttpResponse(
+                body = JSONObject().put("ok", false)
+                    .put("error", "${e.javaClass.simpleName}: ${e.localizedMessage ?: "request failed"}").toString()
+            )
+        }
+    }
+
+    /**
+     * MCP Streamable HTTP endpoint ([AgentMcpHandler]). Stateless and JSON-only, so GET (the optional
+     * server-to-client SSE stream) is refused with 405. Browser origins other than loopback are refused
+     * as DNS-rebinding protection, on top of the bearer token checked by [handleRoute].
+     */
+    private suspend fun handleMcp(context: Context, request: BridgeRequest): HttpResponse {
+        val origin = request.headers["origin"]
+        if (origin != null && !isLoopbackOrigin(origin)) {
+            return HttpResponse(statusCode = 403, statusText = "Forbidden", body = """{"error":"Origin not allowed"}""")
+        }
+        if (request.method != "POST") {
+            return HttpResponse(statusCode = 405, statusText = "Method Not Allowed", body = """{"error":"POST JSON-RPC messages to /mcp"}""")
+        }
+        val handler = AgentMcpHandler(
+            serverVersion = BuildConfig.VERSION_NAME,
+            workspaceApi = { method, path, query, body -> handleWorkspaceApi(context, method, path, query, body).body },
+            devices = { devicesJson(context) }
+        )
+        val reply = handler.handle(request.body)
+            ?: return HttpResponse(statusCode = 202, statusText = "Accepted", body = "")
+        return HttpResponse(body = reply)
+    }
+
+    internal fun isLoopbackOrigin(origin: String): Boolean {
+        val host = runCatching { java.net.URI(origin).host }.getOrNull() ?: return false
+        return host == "127.0.0.1" || host == "localhost" || host == "[::1]"
+    }
+
+    private suspend fun devicesJson(context: Context): String = withContext(Dispatchers.IO) {
+        val configs = AppDatabase.getDatabase(context).sshConfigDao().getAllConfigs()
+        SshHostDiscoveryHelper.toJson(SshHostDiscoveryHelper.aggregateHosts(configs))
+    }
+
+    private fun parseJsonObject(body: String): JSONObject {
+        val trimmed = body.trim()
+        if (trimmed.isEmpty()) return JSONObject()
+        return try {
+            JSONObject(trimmed)
+        } catch (e: JSONException) {
+            throw WorkspaceApiException("Request body is not a JSON object: ${e.message}")
         }
     }
 
@@ -514,33 +692,37 @@ object AgentBridgeService {
                 }
             }
 
-            val username = root.optString("username", "root").trim()
-            val port = root.optInt("port", 22).coerceIn(1, 65535)
-            val name = root.optString("name", "$username@$host:$port").trim()
-            val authType = root.optString("authType", "PASSWORD").uppercase()
-            val password = root.optString("password", "").takeIf { it.isNotEmpty() }
-            val privateKey = root.optString("privateKey", "").takeIf { it.isNotBlank() }
-            val workDirectory = root.optString("workDirectory", "").takeIf { it.isNotBlank() }
-            val postConnectCommand = root.optString("postConnectCommand", "").takeIf { it.isNotBlank() }
             val id = root.optLong("id", 0L)
-
             val db = AppDatabase.getDatabase(context)
             val dao = db.sshConfigDao()
-            val config = SshConfig(
+            // Updating by id keeps every field the request omits (credentials, terminal settings, tunnel link).
+            val existing = if (id > 0L) dao.getConfigById(id) else null
+
+            val username = root.optString("username", existing?.username ?: "root").trim()
+            val port = root.optInt("port", existing?.port ?: 22).coerceIn(1, 65535)
+            val name = root.optString("name", existing?.name ?: "$username@$host:$port").trim()
+            val authType = root.optString("authType", existing?.authType ?: "PASSWORD").uppercase()
+            val password = root.optString("password", "").takeIf { it.isNotEmpty() }
+            val privateKey = root.optString("privateKey", "").takeIf { it.isNotBlank() }
+            val workDirectory = root.optString("workDirectory", "").takeIf { it.isNotBlank() } ?: existing?.workDirectory
+            val postConnectCommand = root.optString("postConnectCommand", "").takeIf { it.isNotBlank() }
+                ?: existing?.postConnectCommand
+
+            val config = (existing ?: SshConfig(name = name, host = host, username = username, authType = authType)).copy(
                 id = id,
                 name = name,
                 host = host,
                 port = port,
                 username = username,
                 authType = authType,
-                encryptedPassword = password?.let(KeystoreManager::encrypt),
-                encryptedPrivateKey = privateKey?.let(KeystoreManager::encrypt),
+                encryptedPassword = password?.let(KeystoreManager::encrypt) ?: existing?.encryptedPassword,
+                encryptedPrivateKey = privateKey?.let(KeystoreManager::encrypt) ?: existing?.encryptedPrivateKey,
                 workDirectory = workDirectory,
                 postConnectCommand = postConnectCommand,
                 updateTime = System.currentTimeMillis()
             )
 
-            val savedId = if (id > 0L && dao.getConfigById(id) != null) {
+            val savedId = if (existing != null) {
                 dao.updateConfig(config)
                 id
             } else {
@@ -647,168 +829,88 @@ object AgentBridgeService {
         }
     }
 
-    fun generateTermuxInstallerScript(bridgePort: Int, termuxSshPort: Int): String {
+    /**
+     * Termux setup script served at `/install.sh`: starts Termux sshd, stores the bridge token in
+     * `~/.config/quickssh/bridge.env` (owner-only), installs the `quickssh` CLI ([cliScript]) and the
+     * `quickssh-workspace` agent skill under `~/.agents/skills`.
+     */
+    fun generateTermuxInstallerScript(bridgePort: Int, termuxSshPort: Int, token: String, cliScript: String): String {
         val d = "$"
-        return """
+        val skillDir = "${d}HOME/${AgentToolkit.SKILL_HOME_PATH.substringBeforeLast('/')}"
+        val tokenFile = "${LocalEnvironmentDetector.TERMUX_HOME}/${AgentToolkit.TOKEN_HOME_PATH}"
+        return listOf(
+            """
             #!/data/data/com.termux/files/usr/bin/bash
-            # QuickSSH <-> Termux Agent Bridge & Config Manager CLI
+            # QuickSSH <-> Termux Agent Bridge setup: quickssh CLI, bridge token and agent skill
             set -e
-            echo "[QuickSSH] Initializing Agent Bridge Integration & CLI..."
+            echo "[QuickSSH] Setting up Agent Bridge integration..."
 
-            # 1. Ensure curl and jq are installed in Termux
-            if ! command -v curl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
-                echo "[QuickSSH] Installing dependencies (curl, jq, openssh)..."
-                pkg install -y curl jq openssh
+            if ! command -v curl >/dev/null 2>&1 || ! command -v sshd >/dev/null 2>&1; then
+                echo "[QuickSSH] Installing dependencies (curl, openssh)..."
+                pkg install -y curl openssh
             fi
 
-            # 2. Start Termux sshd if configured
             if [ "$termuxSshPort" -gt 0 ]; then
                 pkill -f "sshd -p $termuxSshPort" 2>/dev/null || true
                 sshd -p $termuxSshPort 2>/dev/null || true
-                echo "[QuickSSH] Termux OpenSSH daemon running on 127.0.0.1:$termuxSshPort"
+                echo "[QuickSSH] Termux OpenSSH daemon listening on port $termuxSshPort"
             fi
 
-            # 3. Install the 'quickssh' CLI command into Termux PATH
-            mkdir -p "${d}PREFIX/bin"
-            cat << 'EOF' > "${d}PREFIX/bin/quickssh"
-            #!/data/data/com.termux/files/usr/bin/bash
-            # QuickSSH CLI - Control and configure QuickSSH directly from CLI / SSH
-            BRIDGE="http://127.0.0.1:$bridgePort"
-
-            show_help() {
-                echo "QuickSSH Terminal & Config Manager CLI"
-                echo "Usage: quickssh {status|configs|devices|exec <command>}"
-                echo ""
-                echo "Usage:"
-                echo "  quickssh list                   List all SSH configurations"
-                echo "  quickssh export [file.json]     Export full configuration JSON to stdout or file"
-                echo "  quickssh import <file.json|->   Import configuration JSON from file or stdin"
-                echo "  quickssh add [options]          Add or update a server connection"
-                echo "  quickssh delete <id>            Delete a server configuration by ID"
-                echo "  quickssh status                 Check bridge service status"
-                echo "  quickssh exec <command>         Execute command inside QuickSSH sandbox"
-                echo ""
-                echo "Add Options:"
-                echo "  --name <name>        Connection display name"
-                echo "  --host <ip/domain>   Server host or IP address"
-                echo "  --port <port>        SSH port (default: 22)"
-                echo "  --user <username>    SSH username (default: root)"
-                echo "  --password <pwd>     SSH password"
-                echo "  --key <private_key>  SSH private key"
-                echo "  --workdir <dir>      Initial working directory"
-                echo ""
-                echo "Remote / One-liner Examples (from your PC):"
-                echo "  ssh phone 'quickssh export' > backup.json"
-                echo "  cat backup.json | ssh phone 'quickssh import -'"
-                echo "  ssh phone 'quickssh add --name DevServer --host 192.168.1.100 --user admin --password secret'"
-            }
-
-            case "${d}1" in
-                status)
-                    curl -s "${d}BRIDGE/api/status" | jq . 2>/dev/null || curl -s "${d}BRIDGE/api/status"
-                    ;;
-                list|configs)
-                    DATA=${d}(curl -s "${d}BRIDGE/api/configs")
-                    if command -v jq >/dev/null 2>&1; then
-                        echo "${d}DATA" | jq -r '["ID", "NAME", "HOST:PORT", "USER", "AUTH"], ["--", "----", "---------", "----", "----"], (.[] | [.id, .name, "\(.host):\(.port)", .username, .authType]) | @tsv' | column -t -s "${d}\t" 2>/dev/null || echo "${d}DATA" | jq .
-                    else
-                        echo "${d}DATA"
-                    fi
-                    ;;
-                export)
-                    OUT_FILE="${d}2"
-                    if [ -n "${d}OUT_FILE" ]; then
-                        curl -s "${d}BRIDGE/api/configs/export" > "${d}OUT_FILE"
-                        echo "[OK] Exported configurations to ${d}OUT_FILE"
-                    else
-                        curl -s "${d}BRIDGE/api/configs/export"
-                    fi
-                    ;;
-                import)
-                    IN_FILE="${d}2"
-                    if [ -z "${d}IN_FILE" ]; then
-                        echo "Error: Please specify JSON file to import, or '-' for stdin."
-                        exit 1
-                    fi
-                    if [ "${d}IN_FILE" = "-" ]; then
-                        JSON_PAYLOAD=${d}(cat)
-                    elif [ -f "${d}IN_FILE" ]; then
-                        JSON_PAYLOAD=${d}(cat "${d}IN_FILE")
-                    else
-                        echo "Error: File not found: ${d}IN_FILE"
-                        exit 1
-                    fi
-                    curl -s -X POST -H "Content-Type: application/json" -d "${d}JSON_PAYLOAD" "${d}BRIDGE/api/configs/import" | jq . 2>/dev/null || curl -s -X POST -H "Content-Type: application/json" -d "${d}JSON_PAYLOAD" "${d}BRIDGE/api/configs/import"
-                    ;;
-                add)
-                    shift
-                    NAME=""
-                    HOST=""
-                    PORT=22
-                    USER="root"
-                    PASS=""
-                    KEY=""
-                    WORKDIR=""
-                    while [ ${d}# -gt 0 ]; do
-                        case "${d}1" in
-                            --name) NAME="${d}2"; shift 2 ;;
-                            --host) HOST="${d}2"; shift 2 ;;
-                            --port) PORT="${d}2"; shift 2 ;;
-                            --user) USER="${d}2"; shift 2 ;;
-                            --password) PASS="${d}2"; shift 2 ;;
-                            --key) KEY="${d}2"; shift 2 ;;
-                            --workdir) WORKDIR="${d}2"; shift 2 ;;
-                            *) shift ;;
-                        esac
-                    done
-                    if [ -z "${d}HOST" ]; then
-                        echo "Error: --host is required"
-                        exit 1
-                    fi
-                    [ -z "${d}NAME" ] && NAME="${d}USER@${d}HOST:${d}PORT"
-                    AUTH="PASSWORD"
-                    [ -n "${d}KEY" ] && AUTH="PRIVATE_KEY"
-
-                    PAYLOAD=${d}(jq -n \
-                        --arg n "${d}NAME" \
-                        --arg h "${d}HOST" \
-                        --argjson p "${d}PORT" \
-                        --arg u "${d}USER" \
-                        --arg a "${d}AUTH" \
-                        --arg pwd "${d}PASS" \
-                        --arg k "${d}KEY" \
-                        --arg w "${d}WORKDIR" \
-                        '{name: ${d}n, host: ${d}h, port: ${d}p, username: ${d}u, authType: ${d}a, password: (if ${d}pwd=="" then null else ${d}pwd end), privateKey: (if ${d}k=="" then null else ${d}k end), workDirectory: (if ${d}w=="" then null else ${d}w end)}')
-
-                    curl -s -X POST -H "Content-Type: application/json" -d "${d}PAYLOAD" "${d}BRIDGE/api/configs/add" | jq . 2>/dev/null || curl -s -X POST -H "Content-Type: application/json" -d "${d}PAYLOAD" "${d}BRIDGE/api/configs/add"
-                    ;;
-                delete|rm)
-                    ID="${d}2"
-                    if [ -z "${d}ID" ]; then
-                        echo "Error: Please specify ID to delete (e.g. quickssh delete 1)"
-                        exit 1
-                    fi
-                    curl -s -X POST "${d}BRIDGE/api/configs/delete?id=${d}ID" | jq . 2>/dev/null || curl -s -X POST "${d}BRIDGE/api/configs/delete?id=${d}ID"
-                    ;;
-                devices)
-                    curl -s "${d}BRIDGE/api/devices" | jq . 2>/dev/null || curl -s "${d}BRIDGE/api/devices"
-                    ;;
-                exec)
-                    shift
-                    curl -s -X POST -d "${d}*" "${d}BRIDGE/api/terminal/exec" | jq -r '.output // .' 2>/dev/null || curl -s -X POST -d "${d}*" "${d}BRIDGE/api/terminal/exec"
-                    ;;
-                help|--help|-h)
-                    show_help
-                    ;;
-                *)
-                    show_help
-                    ;;
-            esac
-EOF
+            mkdir -p "${d}HOME/.config/quickssh" "${d}PREFIX/bin"
+            ( umask 077; cat > "${d}HOME/${AgentToolkit.ENV_HOME_PATH}" << 'QUICKSSH_ENV_EOF'
+            """.trimIndent(),
+            AgentToolkit.envFileContent(bridgePort, token).trimEnd(),
+            "QUICKSSH_ENV_EOF",
+            "printf '%s' '$token' > \"${d}HOME/${AgentToolkit.TOKEN_HOME_PATH}\"",
+            ")",
+            "cat > \"${d}PREFIX/bin/quickssh\" << 'QUICKSSH_CLI_EOF'",
+            cliScript.trimEnd(),
+            "QUICKSSH_CLI_EOF",
+            """
             chmod +x "${d}PREFIX/bin/quickssh"
-            echo "[QuickSSH] Successfully configured 'quickssh' CLI in Termux!"
-            echo "[QuickSSH] You can now run 'quickssh list', 'quickssh export', 'quickssh import', 'quickssh add' directly."
-        """.trimIndent()
+            echo "[QuickSSH] Installed the 'quickssh' CLI"
+
+            mkdir -p "$skillDir"
+            if quickssh skill > "$skillDir/SKILL.md.tmp" && head -n 1 "$skillDir/SKILL.md.tmp" | grep -q '^---'; then
+                mv "$skillDir/SKILL.md.tmp" "$skillDir/SKILL.md"
+                echo "[QuickSSH] Installed agent skill: $skillDir/SKILL.md"
+            else
+                rm -f "$skillDir/SKILL.md.tmp"
+                echo "[QuickSSH] Warning: could not fetch the agent skill (is the bridge running?)"
+            fi
+
+            OC_CONF="${d}HOME/${AgentToolkit.OPENCODE_CONFIG_HOME_PATH}"
+            mkdir -p "${d}(dirname "${d}OC_CONF")"
+            cat > "${d}OC_CONF.quickssh-v2" << 'QUICKSSH_OPENCODE_EOF'
+            """.trimIndent(),
+            AgentToolkit.opencodeConfigContent(bridgePort, tokenFile).trimEnd(),
+            "QUICKSSH_OPENCODE_EOF",
+            "cat > \"${d}OC_CONF.quickssh-v1\" << 'QUICKSSH_OPENCODE_EOF'",
+            AgentToolkit.opencodeConfigContent(bridgePort, tokenFile, legacyFormat = true).trimEnd(),
+            "QUICKSSH_OPENCODE_EOF",
+            """
+            # opencode 2.x reads mcp.servers.<name>, older releases mcp.<name>: use the installed one's layout.
+            OC_MAJOR=${d}(opencode --version 2>/dev/null | grep -o '[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*' | head -n 1 | cut -d. -f1)
+            OC_LAYOUT=v2
+            if [ -n "${d}OC_MAJOR" ] && [ "${d}OC_MAJOR" -lt 2 ]; then OC_LAYOUT=v1; fi
+            qs_normalized() { sed 's#127\.0\.0\.1:[0-9]*/mcp#PORT#; s#{file:[^}]*}#FILE#' "${d}1"; }
+            OC_GENERATED=0
+            if [ -f "${d}OC_CONF" ]; then
+                for layout in v1 v2; do
+                    if [ "${d}(qs_normalized "${d}OC_CONF")" = "${d}(qs_normalized "${d}OC_CONF.quickssh-${d}layout")" ]; then OC_GENERATED=1; fi
+                done
+            fi
+            mv "${d}OC_CONF.quickssh-${d}OC_LAYOUT" "${d}OC_CONF.quickssh"
+            rm -f "${d}OC_CONF.quickssh-v1" "${d}OC_CONF.quickssh-v2"
+            if [ ! -f "${d}OC_CONF" ] || [ "${d}OC_GENERATED" = 1 ]; then
+                mv "${d}OC_CONF.quickssh" "${d}OC_CONF"
+                echo "[QuickSSH] Registered the quickssh MCP server for opencode (${d}OC_LAYOUT layout): ${d}OC_CONF"
+            else
+                echo "[QuickSSH] ${d}OC_CONF is your own config; to give opencode the quickssh MCP tools, merge the \"quickssh\" server from ${d}OC_CONF.quickssh into it"
+            fi
+
+            echo "[QuickSSH] Done. Try: quickssh tree   |   remote: ssh -p $termuxSshPort <user>@<phone-ip> quickssh tree"
+            """.trimIndent()
+        ).joinToString("\n") + "\n"
     }
 }
-
