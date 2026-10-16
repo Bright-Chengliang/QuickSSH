@@ -274,6 +274,10 @@ interface SshConfigDao {
     @Query("UPDATE ssh_workspaces SET folderId = :folderId, updateTime = :updateTime WHERE id = :workspaceId")
     suspend fun setWorkspaceFolder(workspaceId: Long, folderId: Long?, updateTime: Long = System.currentTimeMillis())
 
+    /** Unified pre-connect tunnel for a group of workspaces; replaces whatever each had before. */
+    @Query("UPDATE ssh_workspaces SET preConnectTunnelPresetId = :presetId, updateTime = :updateTime WHERE id IN (:workspaceIds)")
+    suspend fun setPreConnectTunnelForWorkspaces(workspaceIds: List<Long>, presetId: Long?, updateTime: Long = System.currentTimeMillis())
+
     private suspend fun resolveServerNodeId(config: SshConfig, updateTime: Long): Long {
         val existingById = config.serverNodeId
             .takeIf { it > 0L }

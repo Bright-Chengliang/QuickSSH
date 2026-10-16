@@ -102,7 +102,51 @@ class WorkspaceConfigApiTest {
         expectError("does not exist") { api(store).call("workspaces/update", JSONObject("""{"id":10,"folder":"Nope"}""")) }
         expectError("either pinned or in a folder") { api(store).call("workspaces/update", JSONObject("""{"id":10,"folder":"GPU","pinned":true}""")) }
         expectError("Unknown action") { api(store).call("hosts/create", JSONObject()) }
-        expectError("not a tunnel of workspace") { api(store).call("workspaces/update", JSONObject("""{"id":11,"preConnectTunnelId":1000}""")) }
+        expectError("does not exist") { api(store).call("workspaces/update", JSONObject("""{"id":11,"preConnectTunnelId":4242}""")) }
+        expectError("No tunnel 'nope'") { api(store).call("workspaces/update", JSONObject("""{"id":11,"preConnectTunnel":"nope"}""")) }
+    }
+
+    @Test
+    fun preConnectTunnelMayBelongToAnotherWorkspaceAndSurvivesExportApply() = runBlocking {
+        val store = seededStore()
+        // "site" on server web is reached through the jupyter tunnel of gpu/train (a jump host).
+        api(store).call("workspaces/update", JSONObject("""{"id":20,"preConnectTunnel":"gpu/train/jupyter"}"""))
+        assertEquals(1000L, store.workspaces().first { it.id == 20L }.preConnectTunnelPresetId)
+        api(store).call("workspaces/update", JSONObject("""{"id":20,"preConnectTunnel":null}"""))
+        api(store).call("workspaces/update", JSONObject("""{"id":20,"preConnectTunnel":"jupyter"}""")) // unique name
+        assertEquals(1000L, store.workspaces().first { it.id == 20L }.preConnectTunnelPresetId)
+
+        val document = api(store).exportDocument()
+        val site = document.getJSONArray("servers").getJSONObject(1).getJSONArray("workspaces").getJSONObject(0)
+        assertEquals("gpu/train/jupyter", site.getString("preConnectTunnel"))
+        val before = store.snapshot()
+        assertFalse(api(store).apply(document, prune = true).getBoolean("changed"))
+        assertEquals(before, store.snapshot())
+
+        // Deleting the jump workspace removes its tunnel and the reference to it.
+        api(store).call("workspaces/delete", JSONObject("""{"id":10}"""))
+        assertNull(store.workspaces().first { it.id == 20L }.preConnectTunnelPresetId)
+    }
+
+    @Test
+    fun applyResolvesPreConnectToTunnelCreatedLaterInTheDocument() = runBlocking {
+        val store = seededStore()
+        val result = api(store).apply(
+            JSONObject(
+                """
+                {"servers":[
+                  {"name":"home","host":"127.0.0.1","port":22022,"username":"me","authType":"PASSWORD",
+                   "workspaces":[{"name":"pc","preConnectTunnel":"bastion/main/home-ssh"}]},
+                  {"name":"bastion","host":"1.2.3.4","username":"root","authType":"PASSWORD",
+                   "workspaces":[{"name":"main","tunnels":[{"name":"home-ssh","remoteHost":"10.0.0.2","remotePort":22,"localPort":22022}]}]}
+                ]}
+                """.trimIndent()
+            ),
+            prune = false
+        )
+        assertTrue(result.toString(), result.getBoolean("changed"))
+        val pc = store.workspaces().first { it.name == "pc" }
+        assertEquals(store.tunnels().first { it.name == "home-ssh" }.id, pc.preConnectTunnelPresetId)
     }
 
     @Test

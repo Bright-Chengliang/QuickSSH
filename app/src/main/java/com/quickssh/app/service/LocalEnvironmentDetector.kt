@@ -35,6 +35,12 @@ object LocalEnvironmentDetector {
     const val SYSTEM_SH = "/system/bin/sh"
     const val DEFAULT_TERM = "xterm-256color"
 
+    /** Shell functions for QuickSSH's own scripts, relative to the app home; sourced by ~/.profile and SSH exec. */
+    const val COMMANDS_HOME_PATH = ".config/quickssh/commands.sh"
+
+    /** Scripts installed into ~/bin that must be run through the shell rather than exec'd. */
+    private val SCRIPT_COMMANDS = listOf("quickssh", "opencode")
+
     fun getBuiltinBusyboxFile(context: Context): File {
         val dir = runCatching { context.applicationInfo?.nativeLibraryDir }.getOrNull()
             ?: context.filesDir.absolutePath
@@ -161,11 +167,12 @@ object LocalEnvironmentDetector {
                 echo "\033[1;36m================================================================\033[0m"
                 echo "\033[1;32m  🚀 QuickSSH Built-in opencode AI Agent Integration\033[0m"
                 echo "\033[1;36m================================================================\033[0m"
-                echo "QuickSSH Local Sandbox is ready for opencode CLI & Agent Bridge."
-                echo ""
-                echo "To link opencode with Termux runtime or install opencode CLI:"
-                echo "  1. In Termux, run: pkg install nodejs-lts && npm install -g opencode"
-                echo "  2. Or run: curl -s http://127.0.0.1:$bridgePort/install.sh | bash"
+                echo "opencode cannot run inside the QuickSSH sandbox: Android 10+ only lets an app"
+                echo "execute the tools bundled in its APK, so run opencode in Termux instead:"
+                echo "  1. In Termux: pkg install nodejs-lts && npm install -g opencode-ai"
+                echo "  2. Copy the Termux setup command from QuickSSH Settings > Termux & Agent Gateway"
+                echo "     and run it in Termux (quickssh CLI, agent skill, opencode MCP registration)."
+                echo "  3. To use it inside QuickSSH, open a Termux SSH session (127.0.0.1:8023) and run opencode."
                 echo ""
                 echo "$bridgeTip"
                 echo "Agents manage QuickSSH hosts/workspaces via 'quickssh' (skill: ~/${AgentToolkit.SKILL_HOME_PATH})"
@@ -188,11 +195,25 @@ object LocalEnvironmentDetector {
             "${binDir.absolutePath}:/system/bin:/system/xbin"
         }
         try {
+            File(context.filesDir, COMMANDS_HOME_PATH).apply {
+                parentFile?.mkdirs()
+                writeText(builtinCommandsScript(binDir.absolutePath))
+            }
             profileFile.writeText(builtinProfileScript(pathValue, context.filesDir.absolutePath))
         } catch (_: Exception) {}
 
         return binDir
     }
+
+    /**
+     * Shell functions that run QuickSSH's own scripts (the `quickssh` CLI, the opencode launcher)
+     * through `/system/bin/sh`. Since Android 10, apps targeting API 29+ may not exec() files in their
+     * writable storage (W^X; SELinux denies it with "Permission denied" on enforcing devices), so these
+     * cannot be launched from PATH like the BusyBox applets, which are symlinks into nativeLibraryDir.
+     */
+    internal fun builtinCommandsScript(binDirPath: String): String =
+        "# QuickSSH command wrappers (generated). Android 10+ forbids exec of files in app storage.\n" +
+            SCRIPT_COMMANDS.joinToString("") { "$it() { /system/bin/sh \"$binDirPath/$it\" \"\$@\"; }\n" }
 
     /**
      * ~/.profile shared by the BusyBox ash and Android system shell (mksh) sessions. mksh does not
@@ -202,6 +223,7 @@ object LocalEnvironmentDetector {
     internal fun builtinProfileScript(pathValue: String, homeDir: String): String =
         """
         export PATH="$pathValue"
+        [ -f "$homeDir/$COMMANDS_HOME_PATH" ] && . "$homeDir/$COMMANDS_HOME_PATH"
         if [ -n "${'$'}KSH_VERSION" ]; then
             PS1="$(printf '\001\r\001\033[01;32m\001')quickssh$(printf '\001\033[00m\001'):$(printf '\001\033[01;34m\001')"'${'$'}{PWD/#${'$'}HOME/\~}'"$(printf '\001\033[00m\001')"'$ '
         else

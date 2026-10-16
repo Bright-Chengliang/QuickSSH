@@ -9,6 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import net.schmizz.sshj.SSHClient
 import net.schmizz.sshj.common.StreamCopier
@@ -52,7 +53,9 @@ class FileTransferHelper(private val context: Context) {
         val name: String,
         val path: String,
         val isDirectory: Boolean,
-        val size: Long
+        val size: Long,
+        /** Last modification time from the SFTP attributes, or null when the server did not report one. */
+        val modifiedAtMillis: Long? = null
     )
 
     data class RemoteTreeEntry(
@@ -153,7 +156,8 @@ class FileTransferHelper(private val context: Context) {
                             name = it.name,
                             path = it.path,
                             isDirectory = it.isDirectory,
-                            size = if (it.isRegularFile) it.attributes.size else 0L
+                            size = if (it.isRegularFile) it.attributes.size else 0L,
+                            modifiedAtMillis = remoteModifiedAtMillis(it.attributes.mtime)
                         )
                     }
             }
@@ -277,6 +281,7 @@ class FileTransferHelper(private val context: Context) {
     }
 
     private fun <T> withSftp(config: SshConfig, block: (SFTPClient) -> T): T {
+        ensurePreConnectTunnel(config)
         SSHClient().use { client ->
             client.addHostKeyVerifier(KnownHostsVerifier(context))
             client.connect(config.host, config.port)
@@ -286,6 +291,17 @@ class FileTransferHelper(private val context: Context) {
                 return block(sftp)
             }
         }
+    }
+
+    /**
+     * Same rule as SshClientHelper.connectOnce: a workspace behind a pre-connect tunnel usually targets
+     * the tunnel's loopback port, so every SFTP connection (and every retry) brings the tunnel up first.
+     * Callers run on Dispatchers.IO inside non-suspending retry blocks, hence runBlocking.
+     */
+    private fun ensurePreConnectTunnel(config: SshConfig) {
+        val presetId = config.preConnectTunnelPresetId ?: return
+        val result = runBlocking { TunnelForegroundService.ensurePreConnectTunnel(context, presetId) }
+        if (!result.ready) throw IOException(result.message)
     }
 
     private fun authenticate(client: SSHClient, config: SshConfig) {
@@ -526,6 +542,10 @@ internal fun uploadConflictPolicyFromName(name: String?): FileTransferHelper.Upl
         policy.name.equals(name, ignoreCase = true)
     } ?: FileTransferHelper.UploadConflictPolicy.RENAME
 }
+
+/** SFTP mtime is in epoch seconds; 0 means the server sent no time attribute. */
+internal fun remoteModifiedAtMillis(mtimeSeconds: Long): Long? =
+    mtimeSeconds.takeIf { it > 0L }?.let { it * 1000L }
 
 internal fun remoteChildPath(parent: String, child: String): String {
     val trimmedParent = parent.trim().trimEnd('/', '\\')

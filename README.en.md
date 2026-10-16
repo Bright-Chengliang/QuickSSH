@@ -61,7 +61,7 @@ Mobile terminal tools often force a choice between a standalone local terminal (
 
 **Motivation:** Development services are often bound to a remote loopback interface or private network. Port forwarding lets the phone reach those services without exposing them publicly.
 
-**Implementation:** QuickSSH supports local forwarding, automatic local-port allocation, multiple tunnels, reconnects, and a WebView for the forwarded local endpoint. HTTP Basic Auth prompts are handled inside the tunnel workflow.
+**Implementation:** QuickSSH supports local forwarding, automatic local-port allocation, multiple tunnels, reconnects, and a WebView for the forwarded local endpoint. HTTP Basic Auth prompts are handled inside the tunnel workflow. A workspace can name a pre-connect tunnel (reach a private host through a jump host): terminal connects, reconnects and file transfers/remote browsing bring it up first, and folder, pinned and server cards on the home screen can set one pre-connect tunnel for all their workspaces at once (overriding their own setting; the jump host that owns the tunnel is skipped).
 
 <p align="center"><img src="docs/screenshots/tunnel-en.png" alt="QuickSSH SSH tunnel presets" width="48%" /></p>
 

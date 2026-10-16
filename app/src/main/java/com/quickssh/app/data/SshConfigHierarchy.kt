@@ -29,6 +29,16 @@ fun SshConfig.transferContextLabel(): String {
     return "${serverNodeLabel()} / ${workspaceLabel()}"
 }
 
+/**
+ * Workspaces of a home-screen group (folder, pinned or server card) that a unified pre-connect tunnel
+ * applies to. Local shells never tunnel, and the workspace owning [preset] is the jump host the tunnel
+ * runs through, so it keeps connecting directly instead of depending on itself.
+ */
+fun groupPreConnectTargetIds(workspaces: List<SshConfig>, preset: SshTunnelPreset?): List<Long> =
+    workspaces
+        .filter { !it.isLocalSession && it.authType != "LOCAL" && it.id != preset?.workspaceId }
+        .map { it.id }
+
 fun serverNodeFieldsDiffer(left: SshConfig, right: SshConfig): Boolean {
     return left.serverDisplayName != right.serverDisplayName ||
         left.host != right.host ||

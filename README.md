@@ -63,7 +63,7 @@ Developed by [Bright-Chengliang](https://github.com/Bright-Chengliang) · © 202
 
 **设计动机：** SSH 的价值不只在终端；很多开发服务只绑定在远端回环地址或内网中，手机需要通过端口转发访问，而不是把服务暴露到公网。
 
-**具体实现：** 支持本地端口转发、自动分配本地端口、多隧道并行和断线重连；隧道由独立前台服务托管，并提供 WebView 访问转发后的本地地址和 HTTP Basic Auth 交互。
+**具体实现：** 支持本地端口转发、自动分配本地端口、多隧道并行和断线重连；隧道由独立前台服务托管，并提供 WebView 访问转发后的本地地址和 HTTP Basic Auth 交互。工作区可指定「前置隧道」（经跳板机访问内网主机）：终端连接、重连以及文件传输/远端浏览都会先拉起该隧道；首页的文件夹、置顶和服务器卡片可一键为组内所有工作区统一设置前置隧道（覆盖原设置，隧道所在的跳板机自身会被跳过）。
 
 <p align="center"><img src="docs/screenshots/tunnel.png" alt="QuickSSH SSH 隧道预设" width="48%" /></p>
 
