@@ -1,0 +1,130 @@
+#!@QUICKSSH_SHEBANG@
+# QuickSSH workspace CLI - drives the QuickSSH Agent Bridge (loopback HTTP) from a shell or an AI agent.
+# Installed by QuickSSH; reinstall instead of editing (Settings > Termux & Agent gateway).
+
+QUICKSSH_ENV_FILE="${QUICKSSH_ENV_FILE:-@QUICKSSH_ENV_FILE@}"
+[ -f "$QUICKSSH_ENV_FILE" ] && . "$QUICKSSH_ENV_FILE"
+BRIDGE="${QUICKSSH_BRIDGE_URL:-@QUICKSSH_DEFAULT_URL@}"
+TOKEN="${QUICKSSH_BRIDGE_TOKEN:-}"
+QS_TMP_DIR="${TMPDIR:-/tmp}"
+[ -d "$QS_TMP_DIR" ] || QS_TMP_DIR="$HOME"
+TMP_BODY="$QS_TMP_DIR/quickssh.$$.json"
+trap 'rm -f "$TMP_BODY"' EXIT INT TERM
+
+usage() {
+    cat <<'USAGE'
+QuickSSH workspace CLI
+
+  quickssh status                         Bridge health (no token needed)
+  quickssh tree                           Folders > servers > workspaces > tunnels, with ids (JSON)
+  quickssh export [file]                  Declarative workspace document (no secrets)
+  quickssh apply <file|-> [--dry-run] [--prune]
+                                          Converge the workspace to a document; --dry-run only plans
+  quickssh call <resource/action> [json|-]
+                                          Granular change, e.g.
+                                            quickssh call workspaces/update '{"id":12,"folder":"Prod"}'
+                                          resources: servers workspaces folders tunnels
+                                          actions:   create update delete
+  quickssh devices                        Reachable SSH hosts discovered by QuickSSH/Termux
+  quickssh exec <command>                 Run a command in the QuickSSH app sandbox
+  quickssh skill                          Print the agent skill (full API reference)
+  quickssh env                            Show which bridge/token file this CLI uses
+
+All output is JSON: {"ok":true,"data":...} or {"ok":false,"error":"..."}.
+USAGE
+}
+
+qs_get() {
+    if command -v curl >/dev/null 2>&1; then
+        curl -sS -H "Authorization: Bearer $TOKEN" "$BRIDGE$1"
+    else
+        wget -q -O - --header "Authorization: Bearer $TOKEN" "$BRIDGE$1"
+    fi
+}
+
+qs_post() {
+    if command -v curl >/dev/null 2>&1; then
+        curl -sS -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+            --data-binary "@$TMP_BODY" "$BRIDGE$1"
+    else
+        wget -q -O - --header "Authorization: Bearer $TOKEN" --header "Content-Type: application/json" \
+            --post-file "$TMP_BODY" "$BRIDGE$1"
+    fi
+}
+
+# Writes the request body ($1 = file, '-' for stdin, literal JSON, or empty for {}) to $TMP_BODY.
+qs_body() {
+    if [ -z "$1" ]; then
+        printf '{}' > "$TMP_BODY"
+    elif [ "$1" = "-" ]; then
+        cat > "$TMP_BODY"
+    elif [ -f "$1" ]; then
+        cat "$1" > "$TMP_BODY"
+    else
+        printf '%s' "$1" > "$TMP_BODY"
+    fi
+}
+
+qs_need_token() {
+    if [ -z "$TOKEN" ]; then
+        echo '{"ok":false,"error":"No bridge token. Enable Settings > Termux & Agent gateway in QuickSSH, then rerun its setup command (env file: '"$QUICKSSH_ENV_FILE"')"}'
+        exit 2
+    fi
+}
+
+cmd="$1"
+[ $# -gt 0 ] && shift
+case "$cmd" in
+    status)
+        qs_get /api/status ;;
+    tree|list)
+        qs_need_token; qs_get /api/v2/tree ;;
+    export)
+        qs_need_token
+        if [ -n "$1" ]; then
+            qs_get /api/v2/export > "$1" && echo "exported to $1"
+        else
+            qs_get /api/v2/export
+        fi ;;
+    apply)
+        qs_need_token
+        src=""; query=""
+        for arg in "$@"; do
+            case "$arg" in
+                --dry-run) query="${query}&dryRun=1" ;;
+                --prune) query="${query}&prune=1" ;;
+                *) src="$arg" ;;
+            esac
+        done
+        if [ -z "$src" ]; then echo "usage: quickssh apply <file|-> [--dry-run] [--prune]" >&2; exit 1; fi
+        if [ "$src" != "-" ] && [ ! -f "$src" ]; then
+            case "$src" in
+                \{*) ;;
+                *) echo '{"ok":false,"error":"file not found: '"$src"'"}'; exit 1 ;;
+            esac
+        fi
+        qs_body "$src"
+        qs_post "/api/v2/apply?x=1$query" ;;
+    call)
+        qs_need_token
+        if [ -z "$1" ]; then echo "usage: quickssh call <resource/action> [json|-]" >&2; exit 1; fi
+        action="$1"; shift
+        qs_body "$1"
+        qs_post "/api/v2/$action" ;;
+    devices)
+        qs_need_token; qs_get /api/devices ;;
+    exec)
+        qs_need_token
+        printf '%s' "$*" > "$TMP_BODY"
+        qs_post /api/terminal/exec ;;
+    skill)
+        qs_need_token; qs_get /api/v2/skill ;;
+    env)
+        echo "env file: $QUICKSSH_ENV_FILE"
+        echo "bridge:   $BRIDGE"
+        if [ -n "$TOKEN" ]; then echo "token:    set"; else echo "token:    missing"; fi ;;
+    ""|help|-h|--help)
+        usage ;;
+    *)
+        echo "unknown command: $cmd" >&2; usage; exit 1 ;;
+esac

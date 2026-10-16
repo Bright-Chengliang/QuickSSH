@@ -88,10 +88,12 @@ import com.quickssh.app.service.TunnelForegroundService
 import com.quickssh.app.service.TunnelStatus
 import com.quickssh.app.service.terminalQuickUploadDirectory
 import com.quickssh.app.service.AgentBridgeService
+import com.quickssh.app.service.EmbeddedSshServer
 import com.quickssh.app.service.AgentBridgeState
 import com.quickssh.app.ui.screens.ActiveSessionsScreen
 import com.quickssh.app.ui.screens.AppLanguage
 import com.quickssh.app.ui.screens.EditServerDialog
+import com.quickssh.app.ui.screens.EmbeddedSshSettingsCard
 import com.quickssh.app.ui.screens.LocalQuickSshLanguage
 import com.quickssh.app.ui.screens.QuickSshBottomBar
 import com.quickssh.app.ui.screens.SettingsScreen
@@ -109,6 +111,7 @@ import com.quickssh.app.ui.screens.shellSafePathReference
 import com.quickssh.app.ui.screens.transferQueueTaskUiState
 import com.quickssh.app.ui.screens.transferTaskProgressDetail
 import com.quickssh.app.ui.screens.transferTasksWithBatchState
+import com.quickssh.app.ui.screens.text
 import com.quickssh.app.ui.theme.QuickSshTheme
 import com.quickssh.app.utils.TerminalBuffer
 import com.termux.terminal.TerminalSession
@@ -583,6 +586,7 @@ class MainActivity : FragmentActivity() {
             mutableStateOf(settings.getInt(KEY_TERMUX_SSH_PORT, AgentBridgeService.DEFAULT_TERMUX_SSH_PORT))
         }
         val agentBridgeState by AgentBridgeService.bridgeState.collectAsState()
+        var agentBridgeToken by remember { mutableStateOf(AgentBridgeService.bridgeToken(applicationContext)) }
 
         androidx.compose.runtime.LaunchedEffect(agentBridgeEnabled, agentBridgePort, termuxSshPort) {
             if (agentBridgeEnabled) {
@@ -593,6 +597,20 @@ class MainActivity : FragmentActivity() {
                 )
             } else {
                 AgentBridgeService.stop()
+            }
+        }
+        var embeddedSshEnabled by remember { mutableStateOf(EmbeddedSshServer.isEnabled(applicationContext)) }
+        var embeddedSshPort by remember { mutableStateOf(EmbeddedSshServer.configuredPort(applicationContext)) }
+        var embeddedSshPassword by remember { mutableStateOf(EmbeddedSshServer.password(applicationContext)) }
+        var embeddedSshPasswordAuth by remember { mutableStateOf(EmbeddedSshServer.isPasswordAuthEnabled(applicationContext)) }
+        var embeddedSshAuthorizedKeys by remember { mutableStateOf(EmbeddedSshServer.readAuthorizedKeys(applicationContext)) }
+        val embeddedSshState by EmbeddedSshServer.state.collectAsState()
+
+        androidx.compose.runtime.LaunchedEffect(embeddedSshEnabled, embeddedSshPort) {
+            if (embeddedSshEnabled) {
+                EmbeddedSshServer.start(applicationContext, embeddedSshPort)
+            } else {
+                EmbeddedSshServer.stop()
             }
         }
         var downloadDirectoryUriText by remember {
@@ -1915,6 +1933,44 @@ class MainActivity : FragmentActivity() {
                     agentBridgePort = agentBridgePort,
                     termuxSshPort = termuxSshPort,
                     agentBridgeState = agentBridgeState,
+                    agentBridgeToken = agentBridgeToken,
+                    embeddedSshCard = {
+                        EmbeddedSshSettingsCard(
+                            language = uiLanguage,
+                            enabled = embeddedSshEnabled,
+                            port = embeddedSshPort,
+                            state = embeddedSshState,
+                            password = embeddedSshPassword,
+                            passwordAuthEnabled = embeddedSshPasswordAuth,
+                            authorizedKeys = embeddedSshAuthorizedKeys,
+                            lanAddresses = remember(embeddedSshState.status) { EmbeddedSshServer.lanAddresses() },
+                            onEnabledChange = { enabled ->
+                                embeddedSshEnabled = enabled
+                                settings.edit().putBoolean(EmbeddedSshServer.PREFS_KEY_ENABLED, enabled).apply()
+                            },
+                            onPortChange = { port ->
+                                embeddedSshPort = port
+                                settings.edit().putInt(EmbeddedSshServer.PREFS_KEY_PORT, port).apply()
+                            },
+                            onPasswordAuthChange = { enabled ->
+                                embeddedSshPasswordAuth = enabled
+                                settings.edit().putBoolean(EmbeddedSshServer.PREFS_KEY_PASSWORD_AUTH, enabled).apply()
+                            },
+                            onRegeneratePassword = {
+                                embeddedSshPassword = EmbeddedSshServer.regeneratePassword(applicationContext)
+                            },
+                            onSaveAuthorizedKeys = { text ->
+                                runCatching { EmbeddedSshServer.saveAuthorizedKeys(applicationContext, text) }
+                                    .fold(
+                                        onSuccess = {
+                                            embeddedSshAuthorizedKeys = EmbeddedSshServer.readAuthorizedKeys(applicationContext)
+                                            null
+                                        },
+                                        onFailure = { it.message ?: it.javaClass.simpleName }
+                                    )
+                            }
+                        )
+                    },
                     bottomBar = {
                         QuickSshBottomBar(
                             selectedTab = "SETTINGS",
@@ -1999,6 +2055,17 @@ class MainActivity : FragmentActivity() {
                     onTermuxSshPortChange = { port ->
                         termuxSshPort = port
                         settings.edit().putInt(KEY_TERMUX_SSH_PORT, port).apply()
+                    },
+                    onRegenerateAgentBridgeToken = {
+                        agentBridgeToken = AgentBridgeService.regenerateBridgeToken(applicationContext)
+                        Toast.makeText(
+                            this@MainActivity,
+                            uiLanguage.text(
+                                "已重置访问令牌：Termux 需重新运行配置命令，本地终端需重新打开",
+                                "Token reset: rerun the setup command in Termux and reopen local terminals"
+                            ),
+                            Toast.LENGTH_LONG
+                        ).show()
                     }
                 )
             }
@@ -3590,6 +3657,10 @@ class MainActivity : FragmentActivity() {
             isBound = false
         }
         AgentBridgeService.stop()
+        // Keep remote SSH sessions alive across rotation; the recreated activity re-requests the same port (a no-op).
+        if (!isChangingConfigurations) {
+            EmbeddedSshServer.stop()
+        }
         super.onDestroy()
     }
 

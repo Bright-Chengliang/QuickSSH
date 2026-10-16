@@ -52,6 +52,7 @@ import com.quickssh.app.R
 import com.quickssh.app.service.AgentBridgeService
 import com.quickssh.app.service.AgentBridgeState
 import com.quickssh.app.service.AgentBridgeStatus
+import com.quickssh.app.service.AgentToolkit
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -70,6 +71,8 @@ fun SettingsScreen(
     agentBridgePort: Int = AgentBridgeService.DEFAULT_BRIDGE_PORT,
     termuxSshPort: Int = AgentBridgeService.DEFAULT_TERMUX_SSH_PORT,
     agentBridgeState: AgentBridgeState = AgentBridgeState(),
+    agentBridgeToken: String = "",
+    embeddedSshCard: @Composable () -> Unit = {},
     bottomBar: @Composable () -> Unit,
     onAutoWrapChange: (Boolean) -> Unit,
     onPrivacyModeChange: (Boolean) -> Unit,
@@ -82,7 +85,8 @@ fun SettingsScreen(
     onLanguageChange: (AppLanguage) -> Unit,
     onAgentBridgeEnabledChange: (Boolean) -> Unit = {},
     onAgentBridgePortChange: (Int) -> Unit = {},
-    onTermuxSshPortChange: (Int) -> Unit = {}
+    onTermuxSshPortChange: (Int) -> Unit = {},
+    onRegenerateAgentBridgeToken: () -> Unit = {}
 ) {
     val context = LocalContext.current
     var showExportDialog by remember { mutableStateOf(false) }
@@ -316,7 +320,7 @@ fun SettingsScreen(
 
                             FeedbackButton(
                                 onClick = {
-                                    val cmd = "curl -s http://127.0.0.1:${agentBridgePort}/install.sh | bash"
+                                    val cmd = AgentToolkit.termuxSetupCommand(agentBridgePort, agentBridgeToken)
                                     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                     clipboard.setPrimaryClip(ClipData.newPlainText("quickssh_install", cmd))
                                     Toast.makeText(
@@ -329,9 +333,50 @@ fun SettingsScreen(
                                 Text(language.text("复制 Termux 配置命令", "Copy Termux Setup Cmd"))
                             }
                         }
+
+                        Text(
+                            text = language.text(
+                                "Agent 通过 quickssh 命令和内置 skill（~/.agents/skills/quickssh-workspace）或 MCP（/mcp，opencode 自动注册）管理主机、工作区、文件夹与隧道；本地终端已自动配置，Termux 需运行一次配置命令。",
+                                "Agents manage hosts, workspaces, folders and tunnels with the quickssh CLI and the built-in skill (~/.agents/skills/quickssh-workspace) or over MCP (/mcp, registered for opencode automatically). The local terminal is set up automatically; run the setup command once in Termux."
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.outline
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = language.text("访问令牌: ", "Access token: ") +
+                                    agentBridgeToken.take(4) + "…" + agentBridgeToken.takeLast(4),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.outline,
+                                modifier = Modifier.weight(1f)
+                            )
+                            FeedbackTextButton(
+                                onClick = {
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    clipboard.setPrimaryClip(ClipData.newPlainText("quickssh_bridge_token", agentBridgeToken))
+                                    Toast.makeText(
+                                        context,
+                                        language.text("已复制访问令牌", "Copied access token"),
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            ) {
+                                Text(language.text("复制", "Copy"))
+                            }
+                            FeedbackTextButton(onClick = onRegenerateAgentBridgeToken) {
+                                Text(language.text("重置", "Reset"))
+                            }
+                        }
                     }
                 }
             }
+
+            embeddedSshCard()
 
             Row(
                 modifier = Modifier.fillMaxWidth(),

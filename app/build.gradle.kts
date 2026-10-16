@@ -12,8 +12,8 @@ android {
         applicationId = "com.quickssh.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 25
-        versionName = "1.23.0"
+        versionCode = 27
+        versionName = "1.24.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -47,6 +47,8 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            // Apache MINA SSHD jars each ship one.
+            excludes += "/META-INF/DEPENDENCIES"
         }
         jniLibs {
             useLegacyPackaging = true
@@ -74,6 +76,9 @@ dependencies {
 
     // SSH Connection client
     implementation(libs.sshj)
+
+    // Embedded SSH server (remote shell / exec / loopback forwarding into the app sandbox)
+    implementation(libs.apache.sshd.core)
 
     // Termux Terminal Engine
     implementation("com.github.termux.termux-app:terminal-view:v0.118.0")

@@ -94,7 +94,11 @@ Developed by [Bright-Chengliang](https://github.com/Bright-Chengliang) · © 202
 **具体实现：** 
 - **内置 `opencode` 启动器**：本地沙盒环境预置 `opencode` 启动代理与 `ai` 别名，自动检测并联动 Termux/Node 全局环境与 QuickSSH Agent 网关，实现开箱即用的 AI 辅助编程能力。
 - **默认启动加载 Profile 脚本**：设置中提供「本地终端启动执行 Profile」选项（默认开启），本地终端初始化时自动创建并执行 `~/.quickssh_profile`（或 `~/.profile`），预设 `PATH`、`TERM=xterm-256color`、真彩支持及实用别名（`ll`, `la`, `cls`, `ai`）。
-- **Termux & QuickSSH Agent 网关 (`AgentBridgeService`)**：在本地回环 `127.0.0.1:22022` 提供极简 RESTful API 与 Termux CLI 一键安装脚本（`curl -s http://127.0.0.1:22022/install.sh | bash`），支持从 Termux 无缝查询配置、聚合主机与执行终端指令。
+- **Termux & QuickSSH Agent 网关 (`AgentBridgeService`)**：在设置中开启后，于本地回环 `127.0.0.1:8024`（默认端口，可在设置中修改）提供带访问令牌的 HTTP API。除 `/api/status` 外所有接口都需要 `Authorization: Bearer <令牌>`（设置页可复制/重置令牌），且不返回 CORS 头，防止同机其他应用或网页读取凭据。
+- **Agent 可直接管理工作区配置（`/api/v2`）**：按真实层级（文件夹 › 服务器 › 工作区 › 隧道预设）提供 `tree` 视图、细粒度 `create/update/delete`（缺省字段保留原值，显式 `null` 清空，未知字段报错），以及可导出/编辑/`--dry-run` 预演/原子应用的声明式文档 `quickssh-workspace/v1`（`--prune` 时文档即全量真相，含排序）。密码与私钥只写不读。
+- **`quickssh` CLI 与内置 skill**：本地终端自动安装 `quickssh` 命令（curl 或内置 BusyBox wget 均可）、令牌文件 `~/.config/quickssh/bridge.env` 与 Agent skill `~/.agents/skills/quickssh-workspace/SKILL.md`，内置 opencode 开箱即可增删改主机/工作区/文件夹/隧道。Termux 中运行设置页复制的一键命令（`curl -fsS -H 'Authorization: Bearer <令牌>' http://127.0.0.1:8024/install.sh | bash`）即可获得同样的 CLI 与 skill，并启动 Termux sshd；外部电脑上的 Agent 可通过 `ssh -p 8023 <用户>@<手机IP> quickssh tree` 或 SSH 端口转发访问同一接口（`quickssh skill` 输出完整用法）。
+- **MCP 接口（`/mcp`）**：网关同时是一个 MCP 服务器（Streamable HTTP，同一令牌），提供 `quickssh_tree`、`quickssh_export`、`quickssh_apply`（必须显式指定 `dryRun`）、`quickssh_call`、`quickssh_devices`、`quickssh_guide` 六个工具，与 CLI 共用同一套校验与事务。本地终端与 Termux 配置命令会自动在 `~/.config/opencode/opencode.json` 注册 `quickssh` MCP 服务器（令牌从 `~/.config/quickssh/bridge.token` 读取，兼容 opencode 2.x 的 `mcp.servers` 与旧版布局；已有自定义配置时不覆盖），opencode 可把这些操作当作原生工具调用。
+- **内置 SSH 服务端（`EmbeddedSshServer`）**：基于 Apache MINA SSHD，在设置中开启后监听 `0.0.0.0:8025`（默认端口，可修改），无需 Termux 即可从电脑 `ssh -p 8025 quickssh@<手机IP>` 登录 QuickSSH 的内置终端环境：交互式 Shell 通过 Termux JNI 获得真实 PTY（支持窗口缩放），`ssh 手机 quickssh tree` 这类命令走管道并透传 stdin/stderr/退出码；支持 `~/.ssh/authorized_keys` 公钥登录（设置页可粘贴，支持 ed25519/ECDSA/RSA）与随机生成的密码登录（可关闭/重置）；端口转发仅允许 `-L` 到本机回环，便于远程 Agent 访问网关与 MCP，又不会把手机变成网络代理。设置页显示主机指纹与可复制的登录命令。
 - **SSH 目标与 Hostname 聚合一览**：自动跨数据源扫描 QuickSSH 数据库、Termux `~/.ssh/config` 及 `~/.ssh/known_hosts`，在服务器列表提供一键搜索、复制 Hostname、复制 SSH 连接命令及一键导入直连。
 
 ## 架构概览
@@ -134,7 +138,7 @@ flowchart LR
 - UI：Jetpack Compose + Material 3
 - 终端引擎：Termux Terminal View & Emulator (v0.118.0) + 内嵌多架构 Linux BusyBox PTY
 - 数据库：Room
-- SSH/SFTP：SSHJ + Bouncy Castle
+- SSH/SFTP：SSHJ + Bouncy Castle；内置 SSH 服务端：Apache MINA SSHD
 - 安全：Android Keystore、AndroidX Biometric
 
 ## 项目结构

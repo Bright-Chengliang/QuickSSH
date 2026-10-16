@@ -6,6 +6,7 @@ import android.content.Context
 import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -50,6 +51,8 @@ import com.quickssh.app.data.SshConfig
 import com.quickssh.app.utils.DiscoveredSshHost
 import com.quickssh.app.utils.SshHostDiscoveryHelper
 import com.quickssh.app.utils.SshHostSource
+
+private val CompactButtonPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -241,9 +244,12 @@ fun SshDevicesOverviewDialog(
                                         }
                                     }
 
+                                    // Copy actions share one row and the connect action gets its own full-width row:
+                                    // three default-padded buttons do not fit the dialog width, which squeezed the
+                                    // connect button until its icon and label were clipped away.
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.End,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         OutlinedButton(
@@ -254,12 +260,13 @@ fun SshDevicesOverviewDialog(
                                                     language.text("已复制 Hostname: ${device.hostname}", "Copied Hostname: ${device.hostname}")
                                                 )
                                             },
-                                            modifier = Modifier.height(34.dp)
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .height(34.dp),
+                                            contentPadding = CompactButtonPadding
                                         ) {
-                                            Text(language.text("复制 Host", "Copy Host"), style = MaterialTheme.typography.labelSmall)
+                                            Text(language.text("复制 Host", "Copy Host"), style = MaterialTheme.typography.labelSmall, maxLines = 1)
                                         }
-
-                                        Spacer(modifier = Modifier.width(6.dp))
 
                                         OutlinedButton(
                                             onClick = {
@@ -269,48 +276,51 @@ fun SshDevicesOverviewDialog(
                                                     language.text("已复制 SSH 命令", "Copied SSH Command")
                                                 )
                                             },
-                                            modifier = Modifier.height(34.dp)
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .height(34.dp),
+                                            contentPadding = CompactButtonPadding
                                         ) {
-                                            Text(language.text("复制命令", "Copy Cmd"), style = MaterialTheme.typography.labelSmall)
+                                            Text(language.text("复制命令", "Copy Cmd"), style = MaterialTheme.typography.labelSmall, maxLines = 1)
                                         }
+                                    }
 
-                                        Spacer(modifier = Modifier.width(6.dp))
-
-                                        Button(
-                                            onClick = {
-                                                if (device.quickSshConfigId != null) {
-                                                    if (device.groupedConfigIds.size > 1) {
-                                                        // Multiple workspaces on this IP, show picker
-                                                        workspacePickerDevice = device
-                                                    } else {
-                                                        // Single workspace, connect directly
-                                                        onConnectConfig(device.quickSshConfigId)
-                                                    }
+                                    Button(
+                                        onClick = {
+                                            if (device.quickSshConfigId != null) {
+                                                if (device.groupedConfigIds.size > 1) {
+                                                    // Multiple workspaces on this IP, show picker
+                                                    workspacePickerDevice = device
                                                 } else {
-                                                    onImportAndConnect(device)
+                                                    // Single workspace, connect directly
+                                                    onConnectConfig(device.quickSshConfigId)
                                                 }
-                                            },
-                                            modifier = Modifier.height(34.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.PlayArrow,
-                                                contentDescription = null,
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Text(
-                                                text = if (device.quickSshConfigId != null) {
-                                                    if (device.groupedConfigIds.size > 1) {
-                                                        language.text("选择工作区 (${device.groupedConfigIds.size})", "Choose Workspace (${device.groupedConfigIds.size})")
-                                                    } else {
-                                                        language.text("连接", "Connect")
-                                                    }
+                                            } else {
+                                                onImportAndConnect(device)
+                                            }
+                                        },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(34.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.PlayArrow,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = if (device.quickSshConfigId != null) {
+                                                if (device.groupedConfigIds.size > 1) {
+                                                    language.text("选择工作区 (${device.groupedConfigIds.size})", "Choose Workspace (${device.groupedConfigIds.size})")
                                                 } else {
-                                                    language.text("导入直连", "Import & Go")
-                                                },
-                                                style = MaterialTheme.typography.labelSmall
-                                            )
-                                        }
+                                                    language.text("连接", "Connect")
+                                                }
+                                            } else {
+                                                language.text("导入直连", "Import & Go")
+                                            },
+                                            style = MaterialTheme.typography.labelSmall
+                                        )
                                     }
                                 }
                             }
