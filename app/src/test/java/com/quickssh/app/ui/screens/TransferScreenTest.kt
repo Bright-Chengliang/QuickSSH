@@ -7,6 +7,20 @@ import org.junit.Test
 
 class TransferScreenTest {
     @Test
+    fun remoteEntrySupportingTextShowsSizeAndModifiedTime() {
+        val utc = java.time.ZoneId.of("UTC")
+        val modified = java.time.Instant.parse("2026-10-16T09:05:42Z").toEpochMilli()
+        val file = FileTransferHelper.RemoteEntry("a.log", "/srv/a.log", isDirectory = false, size = 2048, modifiedAtMillis = modified)
+        val dir = FileTransferHelper.RemoteEntry("logs", "/srv/logs", isDirectory = true, size = 0, modifiedAtMillis = modified)
+
+        assertEquals("2.0 KB · 2026-10-16 09:05", remoteEntrySupportingText(file, utc))
+        assertEquals("2026-10-16 09:05", remoteEntrySupportingText(dir, utc))
+        assertEquals("2026-10-16 17:05:42", formatRemoteModifiedTime(modified, withSeconds = true, zone = java.time.ZoneId.of("Asia/Shanghai")))
+        assertEquals("2.0 KB", remoteEntrySupportingText(file.copy(modifiedAtMillis = null), utc))
+        assertEquals(null, remoteEntrySupportingText(dir.copy(modifiedAtMillis = null), utc))
+    }
+
+    @Test
     fun uploadConflictPolicyLabelsAreUserFacing() {
         assertEquals("自动改名", uploadConflictPolicyLabel(FileTransferHelper.UploadConflictPolicy.RENAME))
         assertEquals("覆盖", uploadConflictPolicyLabel(FileTransferHelper.UploadConflictPolicy.OVERWRITE))

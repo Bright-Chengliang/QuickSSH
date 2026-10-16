@@ -27,6 +27,9 @@ quickssh env        # shows the env file, bridge URL and whether a token is set
 - `401 Unauthorized`: the token was regenerated; the user must rerun the setup command
   (Termux) or reopen the local terminal (QuickSSH).
 - The bridge runs while the QuickSSH app is open (it may be in the background).
+- `Permission denied` for `~/bin/quickssh` inside the QuickSSH app: Android 10+ forbids executing
+  files in app storage. Login shells get a `quickssh` shell function; elsewhere run
+  `sh ~/bin/quickssh ...`.
 
 ## Data model
 
@@ -44,8 +47,13 @@ servers   = one SSH endpoint + credentials: name, host, port, username, authType
   affects all its workspaces.
 - A workspace is in at most one folder, or `pinned`, or neither. Folders hold workspaces from
   any server.
-- `preConnectTunnel` names one of the workspace's own tunnels that QuickSSH opens before the
-  SSH session (jump/bastion style).
+- `preConnectTunnel` is a tunnel QuickSSH opens before the SSH session and before every file
+  transfer (jump/bastion style). It is usually a tunnel of *another* workspace (the jump host),
+  and the workspace's host/port then points at that tunnel's local end (`127.0.0.1:<localPort>`).
+  Write it as the workspace's own tunnel name, `server/workspace/tunnel`, a name that is unique
+  across all workspaces, or `preConnectTunnelId`. Export always uses the bare name or the
+  `server/workspace/tunnel` form. In the app, a folder or server card can set one tunnel for all of
+  its workspaces at once.
 - `authType`: `PASSWORD`, `PRIVATE_KEY` or `LOCAL` (a local shell on the phone; host is the
   shell, e.g. `builtin`, port 0).
 - `persistentSessionMode`: `none`, `tmux`, `screen` or `auto` (Linux/macOS hosts).

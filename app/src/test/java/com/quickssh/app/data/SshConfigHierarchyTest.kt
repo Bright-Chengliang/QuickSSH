@@ -26,6 +26,17 @@ class SshConfigHierarchyTest {
     }
 
     @Test
+    fun groupPreConnectSkipsLocalShellsAndTheTunnelsOwnJumpHost() {
+        val jump = config(id = 1, name = "bastion")
+        val target = config(id = 2, name = "home-pc", host = "127.0.0.1")
+        val local = config(id = 3, name = "shell").copy(authType = "LOCAL", isLocalSession = true)
+        val preset = SshTunnelPreset(id = 9, workspaceId = 1, name = "home", remotePort = 22, localPort = 22022)
+
+        assertEquals(listOf(2L), groupPreConnectTargetIds(listOf(jump, target, local), preset))
+        assertEquals(listOf(1L, 2L), groupPreConnectTargetIds(listOf(jump, target, local), null))
+    }
+
+    @Test
     fun transferContextLabelIncludesServerAndWorkspace() {
         val config = config(name = "Deploy", workDirectory = "/srv/app")
 

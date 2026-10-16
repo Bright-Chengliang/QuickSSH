@@ -1822,6 +1822,30 @@ class MainActivity : FragmentActivity() {
                         scope.launch(Dispatchers.IO) {
                             db.sshConfigDao().setWorkspaceFolder(workspaceId, folderId)
                         }
+                    },
+                    tunnelPresets = tunnelPresets,
+                    onSetGroupPreConnect = { workspaceIds, presetId ->
+                        scope.launch {
+                            withContext(Dispatchers.IO) {
+                                db.sshConfigDao().setPreConnectTunnelForWorkspaces(workspaceIds, presetId)
+                            }
+                            val presetName = tunnelPresets.firstOrNull { it.id == presetId }?.name
+                            Toast.makeText(
+                                this@MainActivity,
+                                if (presetName != null) {
+                                    uiLanguage.text(
+                                        "已为 ${workspaceIds.size} 个工作区设置前置连接：$presetName",
+                                        "Pre-connect tunnel '$presetName' set for ${workspaceIds.size} workspace(s)"
+                                    )
+                                } else {
+                                    uiLanguage.text(
+                                        "已取消 ${workspaceIds.size} 个工作区的前置连接",
+                                        "Pre-connect tunnel cleared for ${workspaceIds.size} workspace(s)"
+                                    )
+                                },
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
                     }
                 )
 
@@ -1864,7 +1888,9 @@ class MainActivity : FragmentActivity() {
                                     username = sUser,
                                     authType = sAuthType,
                                     encryptedPassword = encryptedPassword,
-                                    encryptedPrivateKey = encryptedPrivateKey
+                                    encryptedPrivateKey = encryptedPrivateKey,
+                                    // The server's workspaces normally share one jump tunnel; test through it.
+                                    preConnectTunnelPresetId = activeServerGroup.workspaces.firstNotNullOfOrNull { it.preConnectTunnelPresetId }
                                 )
                                 val result = transferHelper().testConnection(testConfig)
                                 serverGroupConnectionTestStatus = result.fold(
@@ -2546,7 +2572,7 @@ class MainActivity : FragmentActivity() {
                             onCreated(savedId)
                         }
                     },
-                    onTestConnectionClicked = { sName, sHost, sPort, sUser, sAuthType, sPass, sPrivateKey, sWorkDir, sPostCommand, sFontSize, sWrapEnabled, sTerm, sShortcuts, sPersistentSession ->
+                    onTestConnectionClicked = { sName, sHost, sPort, sUser, sAuthType, sPass, sPrivateKey, sWorkDir, sPostCommand, sFontSize, sWrapEnabled, sTerm, sShortcuts, sPersistentSession, sPreConnectTunnelPresetId ->
                         val existingEncryptedPassword = configToEdit?.encryptedPassword
                         val existingEncryptedPrivateKey = configToEdit?.encryptedPrivateKey
                         scope.launch {
@@ -2584,7 +2610,8 @@ class MainActivity : FragmentActivity() {
                                 terminalWrapEnabled = sWrapEnabled,
                                 terminalTerm = sTerm,
                                 terminalShortcuts = if (sShortcuts.isNotBlank()) sShortcuts else null,
-                                persistentSessionMode = sPersistentSession
+                                persistentSessionMode = sPersistentSession,
+                                preConnectTunnelPresetId = sPreConnectTunnelPresetId
                             )
                             val result = transferHelper().testConnection(testConfig)
                             connectionTestStatus = result.fold(
@@ -2676,7 +2703,7 @@ class MainActivity : FragmentActivity() {
                             currentScreen = "LIST"
                         }
                     },
-                    onListRemoteDirectory = { sHost, sPort, sUser, sAuthType, sPass, sPrivateKey, sRemotePath ->
+                    onListRemoteDirectory = { sHost, sPort, sUser, sAuthType, sPass, sPrivateKey, sRemotePath, sPreConnectTunnelPresetId ->
                         val existingEncryptedPassword = configToEdit?.encryptedPassword
                         val existingEncryptedPrivateKey = configToEdit?.encryptedPrivateKey
                         val encryptedPassword = if (sAuthType == AUTH_TYPE_PASSWORD) {
@@ -2705,7 +2732,8 @@ class MainActivity : FragmentActivity() {
                             authType = sAuthType,
                             encryptedPassword = encryptedPassword,
                             encryptedPrivateKey = encryptedPrivateKey,
-                            workDirectory = sRemotePath
+                            workDirectory = sRemotePath,
+                            preConnectTunnelPresetId = sPreConnectTunnelPresetId
                         )
                         transferHelper().listRemoteDirectory(tempConfig, sRemotePath)
                     }

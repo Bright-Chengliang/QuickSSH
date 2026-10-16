@@ -5,6 +5,8 @@ import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
@@ -16,6 +18,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -39,6 +42,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -73,6 +77,9 @@ import com.quickssh.app.data.PINNED_FOLDER_ID
 import com.quickssh.app.data.SshConfig
 import com.quickssh.app.data.SshFolder
 import com.quickssh.app.data.SshServerGroup
+import com.quickssh.app.data.SshTunnelPreset
+import com.quickssh.app.data.groupPreConnectTargetIds
+import com.quickssh.app.data.transferContextLabel
 import com.quickssh.app.data.filterSshConfigs
 import com.quickssh.app.data.groupedSshServers
 import com.quickssh.app.data.serverNodeLabel
@@ -98,7 +105,9 @@ fun SshListScreen(
     onCreateFolder: (String) -> Unit = {},
     onRenameFolder: (Long, String) -> Unit = { _, _ -> },
     onDeleteFolder: (Long) -> Unit = {},
-    onSetWorkspaceFolder: (Long, Long?) -> Unit = { _, _ -> }
+    onSetWorkspaceFolder: (Long, Long?) -> Unit = { _, _ -> },
+    tunnelPresets: List<SshTunnelPreset> = emptyList(),
+    onSetGroupPreConnect: (workspaceIds: List<Long>, presetId: Long?) -> Unit = { _, _ -> }
 ) {
     val language = LocalQuickSshLanguage.current
     var searchQuery by remember { mutableStateOf("") }
@@ -108,6 +117,7 @@ fun SshListScreen(
     var folderToRename by remember { mutableStateOf<SshFolder?>(null) }
     var folderToDelete by remember { mutableStateOf<SshFolder?>(null) }
     var workspaceForFolderPicker by remember { mutableStateOf<SshConfig?>(null) }
+    var groupPreConnectTarget by remember { mutableStateOf<GroupPreConnectTarget?>(null) }
     val filteredConfigs by remember(configs, searchQuery) { derivedStateOf { filterSshConfigs(configs, searchQuery) } }
     val groups by remember(filteredConfigs) { derivedStateOf { groupedSshServers(filteredConfigs) } }
     val groupByKey = remember(groups) { groups.associateBy { it.key } }
@@ -373,6 +383,9 @@ fun SshListScreen(
                                 expanded = isExpanded,
                                 isPinned = true,
                                 onToggleExpanded = { expandedFolders["pinned"] = !isExpanded },
+                                onSetPreConnect = {
+                                    groupPreConnectTarget = GroupPreConnectTarget(language.text("置顶", "Pinned"), pinnedWorkspaces)
+                                },
                                 onConnectWorkspace = onConnectClicked,
                                 onEditWorkspace = onEditClicked,
                                 onCopyWorkspace = onCopyClicked,
@@ -392,6 +405,7 @@ fun SshListScreen(
                                 expanded = isExpanded,
                                 isPinned = false,
                                 onToggleExpanded = { expandedFolders["folder:${folder.id}"] = !isExpanded },
+                                onSetPreConnect = { groupPreConnectTarget = GroupPreConnectTarget(folder.name, folderWorkspaces) },
                                 onRenameFolder = { folderToRename = folder },
                                 onDeleteFolder = { folderToDelete = folder },
                                 onConnectWorkspace = onConnectClicked,
@@ -454,6 +468,7 @@ fun SshListScreen(
                             reorderEnabled = reorderEnabled,
                             onToggleExpanded = { expandedGroups[group.key] = !isExpanded },
                             onEditServer = { onEditServerClicked(group) },
+                            onSetPreConnect = { groupPreConnectTarget = GroupPreConnectTarget(group.displayName, group.workspaces) },
                             onAddWorkspace = { onAddWorkspaceClicked(group.workspaces.first()) },
                             onConnectWorkspace = onConnectClicked,
                             onEditWorkspace = onEditClicked,
@@ -521,6 +536,20 @@ fun SshListScreen(
         )
     }
 
+    groupPreConnectTarget?.let { target ->
+        GroupPreConnectDialog(
+            target = target,
+            presets = tunnelPresets,
+            configs = configs,
+            language = language,
+            onDismiss = { groupPreConnectTarget = null },
+            onConfirm = { workspaceIds, presetId ->
+                groupPreConnectTarget = null
+                onSetGroupPreConnect(workspaceIds, presetId)
+            }
+        )
+    }
+
     workspaceForFolderPicker?.let { workspace ->
         FolderPickerDialog(
             workspace = workspace,
@@ -550,6 +579,7 @@ private fun SshServerNodeCard(
     reorderHandle: @Composable () -> Unit,
     onToggleExpanded: () -> Unit,
     onEditServer: () -> Unit,
+    onSetPreConnect: () -> Unit = {},
     onAddWorkspace: () -> Unit,
     onConnectWorkspace: (SshConfig) -> Unit,
     onEditWorkspace: (SshConfig) -> Unit,
@@ -629,6 +659,15 @@ private fun SshServerNodeCard(
                             overflow = TextOverflow.Ellipsis
                         )
                     }
+                }
+                if (groupPreConnectTargetIds(group.workspaces, null).isNotEmpty()) {
+                    FeedbackIconButton(
+                        drawableResId = R.drawable.ic_link,
+                        contentDescription = language.text("统一设置前置连接", "Set pre-connect tunnel for all"),
+                        onClick = onSetPreConnect,
+                        modifier = Modifier.size(36.dp),
+                        tint = MaterialTheme.colorScheme.secondary
+                    )
                 }
                 FeedbackIconButton(
                     imageVector = Icons.Default.Edit,
@@ -882,6 +921,7 @@ private fun SshFolderCard(
     isPinned: Boolean,
     modifier: Modifier = Modifier,
     onToggleExpanded: () -> Unit,
+    onSetPreConnect: (() -> Unit)? = null,
     onRenameFolder: (() -> Unit)? = null,
     onDeleteFolder: (() -> Unit)? = null,
     onConnectWorkspace: (SshConfig) -> Unit,
@@ -963,6 +1003,15 @@ private fun SshFolderCard(
                         )
                     }
                 }
+                if (onSetPreConnect != null && groupPreConnectTargetIds(workspaces, null).isNotEmpty()) {
+                    FeedbackIconButton(
+                        drawableResId = R.drawable.ic_link,
+                        contentDescription = language.text("统一设置前置连接", "Set pre-connect tunnel for all"),
+                        onClick = onSetPreConnect,
+                        modifier = Modifier.size(36.dp),
+                        tint = if (isPinned) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.secondary
+                    )
+                }
                 if (onRenameFolder != null) {
                     FeedbackIconButton(
                         imageVector = Icons.Default.Edit,
@@ -1025,6 +1074,133 @@ private fun SshFolderCard(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+private data class GroupPreConnectTarget(val title: String, val workspaces: List<SshConfig>)
+
+/** Picks one tunnel preset (or none) and applies it to every eligible workspace of a group, replacing their own choice. */
+@Composable
+private fun GroupPreConnectDialog(
+    target: GroupPreConnectTarget,
+    presets: List<SshTunnelPreset>,
+    configs: List<SshConfig>,
+    language: AppLanguage,
+    onDismiss: () -> Unit,
+    onConfirm: (workspaceIds: List<Long>, presetId: Long?) -> Unit
+) {
+    val current = target.workspaces.map { it.preConnectTunnelPresetId }.distinct()
+    var selectedId by remember(target) { mutableStateOf(current.singleOrNull()) }
+    // With mixed settings nothing is preselected, so a hasty "Apply" cannot silently clear them all.
+    var chosen by remember(target) { mutableStateOf(current.size == 1) }
+    val configById = remember(configs) { configs.associateBy { it.id } }
+    val selectedPreset = presets.firstOrNull { it.id == selectedId }
+    val targetIds = groupPreConnectTargetIds(target.workspaces, selectedPreset)
+    val skippedOwner = selectedPreset?.let { preset -> target.workspaces.firstOrNull { it.id == preset.workspaceId } }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(language.text("统一设置前置连接", "Pre-connect tunnel for group")) },
+        text = {
+            Column(
+                modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    text = language.text(
+                        "为「${target.title}」中的 ${targetIds.size} 个工作区统一设置前置隧道，将覆盖它们原有的设置。终端连接与文件传输都会先拉起该隧道。",
+                        "Applies one pre-connect tunnel to ${targetIds.size} workspace(s) in '${target.title}', replacing their own setting. Terminal sessions and file transfers start it first."
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.outline
+                )
+                if (current.size > 1) {
+                    Text(
+                        text = language.text("当前组内设置不一致。", "Workspaces currently use different settings."),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                }
+                PreConnectOptionRow(
+                    selected = chosen && selectedId == null,
+                    title = language.text("无（直连）", "None (direct connection)"),
+                    subtitle = null,
+                    onClick = {
+                        selectedId = null
+                        chosen = true
+                    }
+                )
+                presets.forEach { preset ->
+                    val local = if (preset.localPort > 0) preset.localPort.toString() else language.text("自动", "auto")
+                    val via = configById[preset.workspaceId]?.transferContextLabel()
+                    PreConnectOptionRow(
+                        selected = chosen && selectedId == preset.id,
+                        title = preset.name,
+                        subtitle = "127.0.0.1:$local → ${preset.remoteHost}:${preset.remotePort}" +
+                            (via?.let { language.text(" · 经由 $it", " · via $it") } ?: ""),
+                        onClick = {
+                            selectedId = preset.id
+                            chosen = true
+                        }
+                    )
+                }
+                if (presets.isEmpty()) {
+                    Text(
+                        text = language.text(
+                            "还没有隧道预设：先在「隧道」页或工作区编辑页新建一个。",
+                            "No tunnel presets yet: create one on the Tunnels tab or in a workspace editor first."
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                }
+                if (skippedOwner != null) {
+                    Text(
+                        text = language.text(
+                            "已跳过隧道所在的跳板机「${skippedOwner.transferContextLabel()}」，保留它原有的设置。",
+                            "Skipping the tunnel's own jump host '${skippedOwner.transferContextLabel()}'; its setting is left unchanged."
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(targetIds, selectedId) }, enabled = chosen && targetIds.isNotEmpty()) {
+                Text(language.text("应用到 ${targetIds.size} 个工作区", "Apply to ${targetIds.size}"))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(language.text("取消", "Cancel"))
+            }
+        }
+    )
+}
+
+@Composable
+private fun PreConnectOptionRow(selected: Boolean, title: String, subtitle: String?, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        RadioButton(selected = selected, onClick = onClick)
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (subtitle != null) {
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.outline,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
     }

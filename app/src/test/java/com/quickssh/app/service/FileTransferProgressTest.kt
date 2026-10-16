@@ -9,6 +9,12 @@ import java.io.IOException
 
 class FileTransferProgressTest {
     @Test
+    fun remoteModifiedTimeConvertsSftpSecondsAndTreatsZeroAsMissing() {
+        assertEquals(1_792_141_542_000L, remoteModifiedAtMillis(1_792_141_542L))
+        assertEquals(null, remoteModifiedAtMillis(0L))
+    }
+
+    @Test
     fun progressSampleThrottlesIntermediateUpdates() {
         val sample = progressSample(
             transferredBytes = 100,

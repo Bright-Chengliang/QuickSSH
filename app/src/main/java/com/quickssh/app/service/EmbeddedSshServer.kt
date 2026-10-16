@@ -378,7 +378,11 @@ object EmbeddedSshServer {
         private var process: Process? = null
 
         override fun start(channel: ChannelSession, env: Environment) {
-            val builder = ProcessBuilder(shell.path, "-c", command).directory(File(shell.home))
+            // Non-interactive shells skip ~/.profile, so load the quickssh/opencode wrappers explicitly
+            // (Android 10+ forbids exec of those scripts; see LocalEnvironmentDetector.builtinCommandsScript).
+            val commands = File(shell.home, LocalEnvironmentDetector.COMMANDS_HOME_PATH).absolutePath
+            val script = "[ -f '$commands' ] && . '$commands'\n$command"
+            val builder = ProcessBuilder(shell.path, "-c", script).directory(File(shell.home))
             builder.environment().clear()
             builder.environment().putAll(sessionEnvironment(shell, env))
             val proc = builder.start()

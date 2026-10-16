@@ -91,7 +91,7 @@ class WorkspaceConfigApi(
                             .put("persistentSessionMode", ws.persistentSessionMode)
                             .put("folder", s.realFolderName(ws.folderId).orJsonNull())
                             .put("pinned", ws.folderId == PINNED_FOLDER_ID)
-                            .put("preConnectTunnel", tunnels.firstOrNull { it.id == ws.preConnectTunnelPresetId }?.name.orJsonNull())
+                            .put("preConnectTunnel", preConnectReference(ws, s).orJsonNull())
                             .put("tunnels", JSONArray(tunnels.map { tunnelDocumentJson(it) }))
                     }))
             }))
@@ -327,6 +327,9 @@ class WorkspaceConfigApi(
         }
 
         val keptServerIds = mutableListOf<Long>()
+        // Pre-connect tunnels may belong to another workspace (a jump host), possibly one created later in
+        // this document, so references are resolved after all servers, workspaces and tunnels are written.
+        val pendingPreConnect = mutableListOf<Triple<Long, String, JSONObject>>()
         for (index in 0 until serverEntries.length()) {
             val entry = serverEntries.objectAt(index, "servers")
             entry.requireKeys(SERVER_KEYS + "workspaces", "servers[$index]")
@@ -386,13 +389,7 @@ class WorkspaceConfigApi(
                 keptWorkspaceIds += workspaceId
                 wsEntry.optJSONArray("tunnels")?.let { applyTunnels(workspaceId, label, it, prune, changes) }
                 if (wsEntry.has("preConnectTunnel") || wsEntry.has("preConnectTunnelId")) {
-                    s = store.snapshot()
-                    val workspace = s.workspaceById(workspaceId)
-                    val resolved = resolvePreConnect(workspace, wsEntry, s)
-                    if (resolved != workspace.preConnectTunnelPresetId) {
-                        store.updateWorkspace(workspace.copy(preConnectTunnelPresetId = resolved, updateTime = now()))
-                        changes += "update workspace '$label': preConnectTunnel"
-                    }
+                    pendingPreConnect += Triple(workspaceId, label, wsEntry)
                 }
             }
             if (prune) {
@@ -408,6 +405,16 @@ class WorkspaceConfigApi(
                     val ws = store.snapshot().workspaceById(id)
                     store.updateWorkspace(ws.copy(sortOrder = order))
                 }?.let { changes += "reorder workspaces of '$serverName'" }
+            }
+        }
+
+        for ((workspaceId, label, wsEntry) in pendingPreConnect) {
+            val s = store.snapshot()
+            val workspace = s.workspaces.firstOrNull { it.id == workspaceId } ?: continue
+            val resolved = resolvePreConnect(workspace, wsEntry, s)
+            if (resolved != workspace.preConnectTunnelPresetId) {
+                store.updateWorkspace(workspace.copy(preConnectTunnelPresetId = resolved, updateTime = now()))
+                changes += "update workspace '$label': preConnectTunnel"
             }
         }
 
@@ -577,25 +584,54 @@ class WorkspaceConfigApi(
         return folderId
     }
 
+    /**
+     * A workspace's pre-connect tunnel may be any tunnel preset: usually one owned by the jump-host
+     * workspace it is reached through. By name, its own tunnels win, then `server/workspace/tunnel`
+     * (the form [preConnectReference] writes), then a tunnel name that is unique across all workspaces.
+     */
     private fun resolvePreConnect(workspace: SshWorkspaceProfile, obj: JSONObject, s: WorkspaceSnapshot): Long? {
-        val own = s.tunnelsOf(workspace.id)
         var presetId = workspace.preConnectTunnelPresetId
         if (obj.has("preConnectTunnelId")) {
             presetId = if (obj.isNull("preConnectTunnelId")) null else obj.requireLong("preConnectTunnelId")
-            if (presetId != null && own.none { it.id == presetId }) {
-                throw WorkspaceApiException("Tunnel #$presetId is not a tunnel of workspace '${workspace.name}'")
+            if (presetId != null && s.tunnels.none { it.id == presetId }) {
+                throw WorkspaceApiException("Tunnel #$presetId does not exist")
             }
         }
         if (obj.has("preConnectTunnel")) {
             presetId = if (obj.isNull("preConnectTunnel")) {
                 null
             } else {
-                val name = obj.get("preConnectTunnel").toString().trim()
-                own.firstOrNull { it.name == name }?.id
-                    ?: throw WorkspaceApiException("Workspace '${workspace.name}' has no tunnel named '$name'")
+                val reference = obj.get("preConnectTunnel").toString().trim()
+                s.tunnelsOf(workspace.id).firstOrNull { it.name == reference }?.id
+                    ?: s.tunnels.firstOrNull { qualifiedTunnelName(it, s) == reference }?.id
+                    ?: s.tunnels.filter { it.name == reference }.let { named ->
+                        when (named.size) {
+                            1 -> named.single().id
+                            0 -> throw WorkspaceApiException(
+                                "No tunnel '$reference' for workspace '${workspace.name}'; use its own tunnel name, " +
+                                    "'server/workspace/tunnel' or preConnectTunnelId"
+                            )
+                            else -> throw WorkspaceApiException(
+                                "Tunnel name '$reference' is ambiguous; use one of: " +
+                                    named.joinToString { qualifiedTunnelName(it, s) }
+                            )
+                        }
+                    }
             }
         }
         return presetId
+    }
+
+    /** `preConnectTunnel` as written by tree/export: the bare name for the workspace's own tunnel, else `server/workspace/tunnel`. */
+    private fun preConnectReference(ws: SshWorkspaceProfile, s: WorkspaceSnapshot): String? {
+        val preset = s.tunnels.firstOrNull { it.id == ws.preConnectTunnelPresetId } ?: return null
+        return if (preset.workspaceId == ws.id) preset.name else qualifiedTunnelName(preset, s)
+    }
+
+    private fun qualifiedTunnelName(preset: SshTunnelPreset, s: WorkspaceSnapshot): String {
+        val owner = s.workspaces.firstOrNull { it.id == preset.workspaceId }
+        val server = owner?.let { o -> s.servers.firstOrNull { it.id == o.serverNodeId } }
+        return "${server?.displayName ?: "?"}/${owner?.name ?: "?"}/${preset.name}"
     }
 
     private fun applyTunnelFields(base: SshTunnelPreset, obj: JSONObject, isNew: Boolean): SshTunnelPreset {
@@ -732,7 +768,7 @@ class WorkspaceConfigApi(
             .put("folderId", folderId.orJsonNull())
             .put("folder", s.realFolderName(ws.folderId).orJsonNull())
             .put("preConnectTunnelId", ws.preConnectTunnelPresetId.orJsonNull())
-            .put("preConnectTunnel", tunnels.firstOrNull { it.id == ws.preConnectTunnelPresetId }?.name.orJsonNull())
+            .put("preConnectTunnel", preConnectReference(ws, s).orJsonNull())
             .put("sortOrder", ws.sortOrder)
             .put("tunnels", JSONArray(tunnels.map { tunnelJson(it) }))
     }

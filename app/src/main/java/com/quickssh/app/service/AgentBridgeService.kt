@@ -491,7 +491,7 @@ object AgentBridgeService {
                 path == "tree" && method == "GET" -> api(RoomWorkspaceStore(db.sshConfigDao())).tree()
                 path == "export" && method == "GET" -> api(RoomWorkspaceStore(db.sshConfigDao())).exportDocument()
                 path == "apply" && method == "POST" -> {
-                    val document = parseJsonObject(body)
+                    val document = applyDocument(parseJsonObject(body))
                     val prune = flag("prune")
                     if (flag("dryRun")) {
                         val copy = InMemoryWorkspaceStore(RoomWorkspaceStore(db.sshConfigDao()).snapshot())
@@ -552,6 +552,10 @@ object AgentBridgeService {
         val configs = AppDatabase.getDatabase(context).sshConfigDao().getAllConfigs()
         SshHostDiscoveryHelper.toJson(SshHostDiscoveryHelper.aggregateHosts(configs))
     }
+
+    /** `quickssh export file` saves the whole {"ok":true,"data":{...}} response, so apply accepts that envelope too. */
+    internal fun applyDocument(json: JSONObject): JSONObject =
+        json.optJSONObject("data")?.takeIf { json.has("ok") } ?: json
 
     private fun parseJsonObject(body: String): JSONObject {
         val trimmed = body.trim()

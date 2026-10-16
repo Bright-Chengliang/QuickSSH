@@ -173,6 +173,16 @@ class LocalTerminalTest {
     }
 
     @Test
+    fun scriptCommandsRunThroughTheShellInsteadOfExec() {
+        val commands = LocalEnvironmentDetector.builtinCommandsScript("/app/files/bin")
+        assertTrue(commands, commands.contains("quickssh() { /system/bin/sh \"/app/files/bin/quickssh\" \"\$@\"; }\n"))
+        assertTrue(commands, commands.contains("opencode() { /system/bin/sh \"/app/files/bin/opencode\" \"\$@\"; }\n"))
+
+        val profile = LocalEnvironmentDetector.builtinProfileScript("/app/files/bin:/system/bin", "/app/files")
+        assertTrue(profile, profile.contains(". \"/app/files/${LocalEnvironmentDetector.COMMANDS_HOME_PATH}\""))
+    }
+
+    @Test
     fun localEnvironmentDetectorExportsAndroidRuntimeVariables() {
         val filesDir = tempFolder.newFolder("filesDir3")
         val cacheDir = tempFolder.newFolder("cacheDir3")

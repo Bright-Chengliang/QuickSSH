@@ -81,10 +81,10 @@ fun SshAddScreen(
     connectionTestStatus: String = "",
     isTestingConnection: Boolean = false,
     onBackClicked: () -> Unit,
-    onTestConnectionClicked: (name: String, host: String, port: Int, user: String, authType: String, password: String, privateKey: String, workDirectory: String, postConnectCommand: String, terminalFontSizeSp: Int, terminalWrapEnabled: Boolean?, terminalTerm: String, terminalShortcuts: String, persistentSessionMode: String) -> Unit,
+    onTestConnectionClicked: (name: String, host: String, port: Int, user: String, authType: String, password: String, privateKey: String, workDirectory: String, postConnectCommand: String, terminalFontSizeSp: Int, terminalWrapEnabled: Boolean?, terminalTerm: String, terminalShortcuts: String, persistentSessionMode: String, preConnectTunnelPresetId: Long?) -> Unit,
     onSaveClicked: (name: String, host: String, port: Int, user: String, authType: String, password: String, privateKey: String, workDirectory: String, postConnectCommand: String, terminalFontSizeSp: Int, terminalWrapEnabled: Boolean?, terminalTerm: String, terminalShortcuts: String, persistentSessionMode: String, serverDisplayName: String, preConnectTunnelPresetId: Long?) -> Unit,
     onCreateTunnelPreset: ((preset: SshTunnelPreset, onCreated: (Long) -> Unit) -> Unit)? = null,
-    onListRemoteDirectory: (suspend (host: String, port: Int, user: String, authType: String, password: String, privateKey: String, remotePath: String) -> Result<List<FileTransferHelper.RemoteEntry>>)? = null
+    onListRemoteDirectory: (suspend (host: String, port: Int, user: String, authType: String, password: String, privateKey: String, remotePath: String, preConnectTunnelPresetId: Long?) -> Result<List<FileTransferHelper.RemoteEntry>>)? = null
 ) {
     val language = LocalQuickSshLanguage.current
     val isEditing = configToEdit != null && !isCopyMode
@@ -502,7 +502,8 @@ fun SshAddScreen(
                             authType,
                             password,
                             privateKey,
-                            path
+                            path,
+                            if (isLocalMode) null else preConnectTunnelPresetId
                         )
                     },
                     onPathSelected = { selectedPath ->
@@ -764,7 +765,8 @@ fun SshAddScreen(
                                 terminalWrapChoice,
                                 terminalTerm.trim(),
                                 terminalShortcuts.trim(),
-                                persistentSessionMode
+                                persistentSessionMode,
+                                if (isLocalMode) null else preConnectTunnelPresetId
                             )
                         }
                     },

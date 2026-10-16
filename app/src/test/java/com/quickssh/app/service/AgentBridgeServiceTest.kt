@@ -74,6 +74,14 @@ class AgentBridgeServiceTest {
     }
 
     @Test
+    fun testApplyAcceptsSavedExportEnvelope() {
+        val document = org.json.JSONObject("""{"format":"quickssh-workspace/v1","servers":[]}""")
+        val envelope = org.json.JSONObject().put("ok", true).put("data", document)
+        assertEquals(document.toString(), AgentBridgeService.applyDocument(envelope).toString())
+        assertEquals(document.toString(), AgentBridgeService.applyDocument(document).toString())
+    }
+
+    @Test
     fun testMcpOriginCheckAllowsOnlyLoopback() {
         assertTrue(AgentBridgeService.isLoopbackOrigin("http://127.0.0.1:3000"))
         assertTrue(AgentBridgeService.isLoopbackOrigin("http://localhost"))

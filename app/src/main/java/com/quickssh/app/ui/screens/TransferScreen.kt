@@ -57,6 +57,9 @@ import com.quickssh.app.data.transferContextLabel
 import com.quickssh.app.data.workspaceLabel
 import com.quickssh.app.service.FileTransferHelper
 import kotlin.math.roundToInt
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 data class RemoteDownloadPlanConfirmationUiState(
     val fileCount: Int,
@@ -730,8 +733,8 @@ private fun RemoteBrowser(
             )
             Column(modifier = Modifier.weight(1f)) {
                 Text(text = entry.name, color = contentColor, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (!entry.isDirectory) {
-                    Text(text = formatBytes(entry.size), style = MaterialTheme.typography.bodySmall, color = supportingColor)
+                remoteEntrySupportingText(entry)?.let { supporting ->
+                    Text(text = supporting, style = MaterialTheme.typography.bodySmall, color = supportingColor, maxLines = 1)
                 }
             }
         }
@@ -837,6 +840,13 @@ private fun RemoteEntryMenuDialog(
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                formatRemoteModifiedTime(entry.modifiedAtMillis, withSeconds = true)?.let { modified ->
+                    Text(
+                        text = language.text("修改时间：", "Modified: ") + modified,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                }
                 FeedbackTextButton(onClick = onSelectClicked, modifier = Modifier.fillMaxWidth()) {
                     Text(if (selected) language.text("取消选择", "Deselect") else language.text("选中此项", "Select"))
                 }
@@ -938,6 +948,27 @@ private fun ResponsiveOutlinedButton(
         trailingIcon?.invoke()
     }
 }
+
+private val remoteModifiedMinuteFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
+private val remoteModifiedSecondFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+
+/** Remote mtime in the device's time zone, or null when the server reported none. */
+internal fun formatRemoteModifiedTime(
+    modifiedAtMillis: Long?,
+    withSeconds: Boolean = false,
+    zone: ZoneId = ZoneId.systemDefault()
+): String? = modifiedAtMillis?.let {
+    Instant.ofEpochMilli(it).atZone(zone).format(if (withSeconds) remoteModifiedSecondFormat else remoteModifiedMinuteFormat)
+}
+
+/** Second line of a remote browser row: size (files only) and last modification time. */
+internal fun remoteEntrySupportingText(
+    entry: FileTransferHelper.RemoteEntry,
+    zone: ZoneId = ZoneId.systemDefault()
+): String? = listOfNotNull(
+    if (entry.isDirectory) null else formatBytes(entry.size),
+    formatRemoteModifiedTime(entry.modifiedAtMillis, zone = zone)
+).takeIf { it.isNotEmpty() }?.joinToString(" · ")
 
 private fun formatBytes(bytes: Long): String {
     if (bytes < 1024L) return "$bytes B"

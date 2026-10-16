@@ -66,6 +66,8 @@ class RoomWorkspaceStore(private val dao: SshConfigDao) : WorkspaceStore {
     override suspend fun updateWorkspace(workspace: SshWorkspaceProfile) = dao.updateWorkspace(workspace)
 
     override suspend fun deleteWorkspace(id: Long) {
+        // Other workspaces may use this workspace's tunnels as their pre-connect tunnel.
+        dao.getTunnelPresetsForWorkspace(id).forEach { dao.clearPreConnectTunnelReferences(it.id) }
         dao.deleteTunnelPresetsForWorkspace(id)
         dao.deleteWorkspaceById(id)
     }
@@ -129,7 +131,7 @@ class InMemoryWorkspaceStore(initial: WorkspaceSnapshot = WorkspaceSnapshot()) :
     }
 
     override suspend fun deleteWorkspace(id: Long) {
-        tunnelRows.values.filter { it.workspaceId == id }.forEach { tunnelRows.remove(it.id) }
+        tunnelRows.values.filter { it.workspaceId == id }.forEach { deleteTunnel(it.id) }
         workspaceRows.remove(id)
     }
 
