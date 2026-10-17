@@ -444,7 +444,8 @@ object AgentBridgeService {
                 val cli = AgentToolkit.cliScript(
                     template = AgentToolkit.cliTemplate(context),
                     shebang = AgentToolkit.TERMUX_SHELL,
-                    envFile = "\$HOME/${AgentToolkit.ENV_HOME_PATH}",
+                    // Absolute, not $HOME: agents often run the CLI inside proot-distro, where HOME is /root.
+                    envFile = "${LocalEnvironmentDetector.TERMUX_HOME}/${AgentToolkit.ENV_HOME_PATH}",
                     bridgePort = bridgePort
                 )
                 val script = generateTermuxInstallerScript(bridgePort, termuxSshPort, token, cli)
@@ -836,7 +837,9 @@ object AgentBridgeService {
     /**
      * Termux setup script served at `/install.sh`: starts Termux sshd, stores the bridge token in
      * `~/.config/quickssh/bridge.env` (owner-only), installs the `quickssh` CLI ([cliScript]) and the
-     * `quickssh-workspace` agent skill under `~/.agents/skills`.
+     * `quickssh-workspace` agent skill under `~/.agents/skills`, and registers the `/mcp` server for opencode
+     * (merged into a user's own config). When Termux's `opencode` is a proot-distro wrapper, the skill and
+     * MCP server are also registered under that distro's `/root`, which is the HOME opencode actually reads.
      */
     fun generateTermuxInstallerScript(bridgePort: Int, termuxSshPort: Int, token: String, cliScript: String): String {
         val d = "$"
@@ -883,13 +886,13 @@ object AgentBridgeService {
                 echo "[QuickSSH] Warning: could not fetch the agent skill (is the bridge running?)"
             fi
 
-            OC_CONF="${d}HOME/${AgentToolkit.OPENCODE_CONFIG_HOME_PATH}"
-            mkdir -p "${d}(dirname "${d}OC_CONF")"
-            cat > "${d}OC_CONF.quickssh-v2" << 'QUICKSSH_OPENCODE_EOF'
+            QS_OC_DIR="${d}HOME/.config/quickssh/opencode"
+            mkdir -p "${d}QS_OC_DIR"
+            cat > "${d}QS_OC_DIR/v2" << 'QUICKSSH_OPENCODE_EOF'
             """.trimIndent(),
             AgentToolkit.opencodeConfigContent(bridgePort, tokenFile).trimEnd(),
             "QUICKSSH_OPENCODE_EOF",
-            "cat > \"${d}OC_CONF.quickssh-v1\" << 'QUICKSSH_OPENCODE_EOF'",
+            "cat > \"${d}QS_OC_DIR/v1\" << 'QUICKSSH_OPENCODE_EOF'",
             AgentToolkit.opencodeConfigContent(bridgePort, tokenFile, legacyFormat = true).trimEnd(),
             "QUICKSSH_OPENCODE_EOF",
             """
@@ -898,19 +901,62 @@ object AgentBridgeService {
             OC_LAYOUT=v2
             if [ -n "${d}OC_MAJOR" ] && [ "${d}OC_MAJOR" -lt 2 ]; then OC_LAYOUT=v1; fi
             qs_normalized() { sed 's#127\.0\.0\.1:[0-9]*/mcp#PORT#; s#{file:[^}]*}#FILE#' "${d}1"; }
-            OC_GENERATED=0
-            if [ -f "${d}OC_CONF" ]; then
-                for layout in v1 v2; do
-                    if [ "${d}(qs_normalized "${d}OC_CONF")" = "${d}(qs_normalized "${d}OC_CONF.quickssh-${d}layout")" ]; then OC_GENERATED=1; fi
-                done
-            fi
-            mv "${d}OC_CONF.quickssh-${d}OC_LAYOUT" "${d}OC_CONF.quickssh"
-            rm -f "${d}OC_CONF.quickssh-v1" "${d}OC_CONF.quickssh-v2"
-            if [ ! -f "${d}OC_CONF" ] || [ "${d}OC_GENERATED" = 1 ]; then
-                mv "${d}OC_CONF.quickssh" "${d}OC_CONF"
-                echo "[QuickSSH] Registered the quickssh MCP server for opencode (${d}OC_LAYOUT layout): ${d}OC_CONF"
-            else
-                echo "[QuickSSH] ${d}OC_CONF is your own config; to give opencode the quickssh MCP tools, merge the \"quickssh\" server from ${d}OC_CONF.quickssh into it"
+            # Adds the quickssh entry to a user's own JSON config, keeping their other MCP servers; fails on JSONC.
+            qs_merge_mcp() {
+                if command -v python3 >/dev/null 2>&1; then
+                    python3 -c 'import json, sys
+            c = json.load(open(sys.argv[1])); q = json.load(open(sys.argv[2])); m = c.setdefault("mcp", {})
+            for k, v in q["mcp"].items():
+                if k == "servers" and isinstance(m.get(k), dict): m[k].update(v)
+                else: m[k] = v
+            json.dump(c, open(sys.argv[1], "w"), indent=2, ensure_ascii=False)' "${d}1" "${d}2"
+                elif command -v node >/dev/null 2>&1; then
+                    node -e 'const fs = require("fs"); const [f, s] = process.argv.slice(1);
+            const c = JSON.parse(fs.readFileSync(f, "utf8")); const q = JSON.parse(fs.readFileSync(s, "utf8")); const m = c.mcp = c.mcp || {};
+            for (const [k, v] of Object.entries(q.mcp)) { if (k === "servers" && m[k] && typeof m[k] === "object") Object.assign(m[k], v); else m[k] = v; }
+            fs.writeFileSync(f, JSON.stringify(c, null, 2) + "\n");' "${d}1" "${d}2"
+                else
+                    return 1
+                fi
+            }
+            # Registers the quickssh MCP server in <home>/.config/opencode/opencode.json.
+            qs_register_opencode() {
+                OC_CONF="${d}1/${AgentToolkit.OPENCODE_CONFIG_HOME_PATH}"
+                mkdir -p "${d}(dirname "${d}OC_CONF")"
+                OC_GENERATED=0
+                if [ -f "${d}OC_CONF" ]; then
+                    for layout in v1 v2; do
+                        if [ "${d}(qs_normalized "${d}OC_CONF")" = "${d}(qs_normalized "${d}QS_OC_DIR/${d}layout")" ]; then OC_GENERATED=1; fi
+                    done
+                fi
+                cp "${d}QS_OC_DIR/${d}OC_LAYOUT" "${d}OC_CONF.quickssh"
+                if [ ! -f "${d}OC_CONF" ] || [ "${d}OC_GENERATED" = 1 ]; then
+                    mv "${d}OC_CONF.quickssh" "${d}OC_CONF"
+                    echo "[QuickSSH] Registered the quickssh MCP server for opencode (${d}OC_LAYOUT layout): ${d}OC_CONF"
+                elif cp "${d}OC_CONF" "${d}OC_CONF.bak-quickssh" && qs_merge_mcp "${d}OC_CONF" "${d}OC_CONF.quickssh" 2>/dev/null; then
+                    rm -f "${d}OC_CONF.quickssh"
+                    echo "[QuickSSH] Added the quickssh MCP server to your opencode config (${d}OC_LAYOUT layout, backup ${d}OC_CONF.bak-quickssh): ${d}OC_CONF"
+                else
+                    if [ -f "${d}OC_CONF.bak-quickssh" ]; then mv "${d}OC_CONF.bak-quickssh" "${d}OC_CONF"; fi
+                    echo "[QuickSSH] ${d}OC_CONF is your own config; to give opencode the quickssh MCP tools, merge the \"quickssh\" server from ${d}OC_CONF.quickssh into it"
+                fi
+            }
+            qs_register_opencode "${d}HOME"
+
+            # Termux's opencode is often a proot-distro wrapper: that opencode runs as root inside the distro and
+            # reads /root, so register the skill and MCP server there too (Termux paths stay bound inside proot).
+            OC_BIN=${d}(command -v opencode 2>/dev/null || true)
+            if [ -n "${d}OC_BIN" ] && grep -q 'proot-distro' "${d}OC_BIN" 2>/dev/null; then
+                OC_DISTRO=${d}(grep -o 'proot-distro \(run\|login\) [A-Za-z0-9._-]*' "${d}OC_BIN" | head -n 1 | awk '{print ${d}3}')
+                # proot-distro 4.x (bash) keeps installed-rootfs/<distro>; the Python rewrite containers/<distro>/rootfs.
+                OC_ROOT="${d}PREFIX/var/lib/proot-distro/installed-rootfs/${d}OC_DISTRO/root"
+                [ -d "${d}OC_ROOT" ] || OC_ROOT="${d}PREFIX/var/lib/proot-distro/containers/${d}OC_DISTRO/rootfs/root"
+                if [ -n "${d}OC_DISTRO" ] && [ -d "${d}OC_ROOT" ]; then
+                    mkdir -p "${d}OC_ROOT/.agents/skills"
+                    ln -sfn "$skillDir" "${d}OC_ROOT/.agents/skills/${AgentToolkit.SKILL_NAME}"
+                    echo "[QuickSSH] Linked the agent skill into proot-distro ${d}OC_DISTRO: /root/.agents/skills/${AgentToolkit.SKILL_NAME}"
+                    qs_register_opencode "${d}OC_ROOT"
+                fi
             fi
 
             echo "[QuickSSH] Done. Try: quickssh tree   |   remote: ssh -p $termuxSshPort <user>@<phone-ip> quickssh tree"

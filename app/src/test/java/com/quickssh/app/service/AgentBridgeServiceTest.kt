@@ -29,7 +29,7 @@ class AgentBridgeServiceTest {
 
     @Test
     fun testGenerateTermuxInstallerScriptInstallsTokenCliAndSkill() {
-        val cli = AgentToolkit.cliScript(cliTemplate(), AgentToolkit.TERMUX_SHELL, "\$HOME/.config/quickssh/bridge.env", 8024)
+        val cli = AgentToolkit.cliScript(cliTemplate(), AgentToolkit.TERMUX_SHELL, "/data/data/com.termux/files/home/.config/quickssh/bridge.env", 8024)
         val script = AgentBridgeService.generateTermuxInstallerScript(
             bridgePort = 8024,
             termuxSshPort = 8023,
@@ -41,14 +41,22 @@ class AgentBridgeServiceTest {
         assertTrue(script.contains("export QUICKSSH_BRIDGE_URL=http://127.0.0.1:8024\nexport QUICKSSH_BRIDGE_TOKEN=t0ken\nQUICKSSH_ENV_EOF"))
         assertTrue(script.contains("umask 077"))
         assertTrue(script.contains("#!/data/data/com.termux/files/usr/bin/sh\n"))
-        assertTrue(script.contains("QUICKSSH_ENV_FILE=\"\${QUICKSSH_ENV_FILE:-\$HOME/.config/quickssh/bridge.env}\""))
+        assertTrue(script.contains("QUICKSSH_ENV_FILE=\"\${QUICKSSH_ENV_FILE:-/data/data/com.termux/files/home/.config/quickssh/bridge.env}\""))
         assertTrue(script.contains("\$HOME/.agents/skills/quickssh-workspace/SKILL.md"))
         // Heredoc delimiters must not occur inside the embedded CLI, or the script would be cut short.
         assertEquals(1, Regex("^QUICKSSH_CLI_EOF$", RegexOption.MULTILINE).findAll(script).count())
         assertFalse(cli.contains("@QUICKSSH_"))
         assertTrue(script.contains("printf '%s' 't0ken' > \"\$HOME/.config/quickssh/bridge.token\""))
         assertTrue(script.contains("\"url\": \"http://127.0.0.1:8024/mcp\""))
-        assertTrue(script.contains("OC_CONF=\"\$HOME/.config/opencode/opencode.json\""))
+        assertTrue(script.contains("OC_CONF=\"\$1/.config/opencode/opencode.json\""))
+        assertTrue(script.contains("qs_register_opencode \"\$HOME\""))
+        // A user's own opencode config gets the server merged in (with a backup) instead of a manual hint only.
+        assertTrue(script.contains("qs_merge_mcp \"\$OC_CONF\" \"\$OC_CONF.quickssh\""))
+        // proot-distro opencode reads /root inside the distro: skill and MCP are registered there as well.
+        assertTrue(script.contains("installed-rootfs/\$OC_DISTRO/root"))
+        assertTrue(script.contains("containers/\$OC_DISTRO/rootfs/root"))
+        assertTrue(script.contains("ln -sfn \"\$HOME/.agents/skills/quickssh-workspace\" \"\$OC_ROOT/.agents/skills/quickssh-workspace\""))
+        assertTrue(script.contains("qs_register_opencode \"\$OC_ROOT\""))
         assertTrue(script.contains("{file:/data/data/com.termux/files/home/.config/quickssh/bridge.token}"))
         // One heredoc per opencode config layout (2.x and 1.x); the installer picks one at run time.
         assertEquals(2, Regex("^QUICKSSH_OPENCODE_EOF$", RegexOption.MULTILINE).findAll(script).count())
