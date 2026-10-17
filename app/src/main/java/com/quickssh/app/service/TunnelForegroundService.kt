@@ -19,6 +19,7 @@ import com.quickssh.app.MainActivity
 import com.quickssh.app.data.AppDatabase
 import com.quickssh.app.data.SshConfig
 import com.quickssh.app.data.SshTunnelPreset
+import com.quickssh.app.data.isRemoteForward
 import com.quickssh.app.data.transferContextLabel
 import com.quickssh.app.security.KeystoreManager
 import kotlinx.coroutines.CancellationException
@@ -44,6 +45,8 @@ import net.schmizz.sshj.DefaultConfig
 import net.schmizz.sshj.SSHClient
 import net.schmizz.sshj.connection.channel.direct.LocalPortForwarder
 import net.schmizz.sshj.connection.channel.direct.Parameters
+import net.schmizz.sshj.connection.channel.forwarded.RemotePortForwarder
+import net.schmizz.sshj.connection.channel.forwarded.SocketForwardingConnectListener
 import org.bouncycastle.jce.provider.BouncyCastleProvider
 import java.io.IOException
 import java.net.BindException
@@ -55,6 +58,7 @@ import java.security.Security
 import java.util.concurrent.atomic.AtomicBoolean
 
 private const val TUNNEL_RECONNECT_MAX_ATTEMPTS = 3
+private const val PERSISTENT_RECONNECT_MAX_DELAY_MS = 60_000L
 
 /** Result of making sure a workspace's pre-connect tunnel is forwarding before SSH connects. */
 data class PreConnectTunnelResult(
@@ -81,10 +85,20 @@ data class TunnelServiceState(
     val localPort: Int,
     val status: TunnelStatus,
     val statusText: String,
-    val startedAt: Long = System.currentTimeMillis()
+    val startedAt: Long = System.currentTimeMillis(),
+    /** `ssh -R`: the server listens on [remoteHost]:[remotePort] and forwards to phone [localHost]:[localPort]. */
+    val remoteForward: Boolean = false,
+    /** Resident tunnel (auto-started, reconnected without a retry limit). */
+    val persistent: Boolean = false
 ) {
     val localEndpoint: String = "$localHost:$localPort"
     val browserUrl: String = "http://$localEndpoint"
+    /** Direction-aware summary: `127.0.0.1:8080 -> 127.0.0.1:3000` or `server 127.0.0.1:2226 -> phone 127.0.0.1:8025`. */
+    val routeText: String = if (remoteForward) {
+        "server $remoteHost:$remotePort -> phone $localEndpoint"
+    } else {
+        "$localEndpoint -> $remoteHost:$remotePort"
+    }
 }
 
 class TunnelForegroundService : Service() {
@@ -134,9 +148,11 @@ class TunnelForegroundService : Service() {
 
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
-            // Network available callback
+            // Tunnels waiting out a reconnect backoff retry as soon as a network comes back.
+            networkGeneration.value = networkGeneration.value + 1
         }
     }
+    private val networkGeneration = MutableStateFlow(0L)
 
     private fun registerNetworkCallback() {
         val manager = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
@@ -159,6 +175,10 @@ class TunnelForegroundService : Service() {
             ACTION_START_TUNNEL -> startTunnel(intent)
             ACTION_STOP_TUNNEL -> stopTunnel(intent.getStringExtra(EXTRA_TUNNEL_ID))
             ACTION_STOP_ALL_TUNNELS -> stopAllTunnels()
+            // START_STICKY restart after the process was killed: bring resident tunnels back.
+            null -> serviceScope.launch {
+                if (startAutoStartTunnels(applicationContext) == 0 && activeTunnels.isEmpty()) stopSelf()
+            }
         }
         return START_STICKY
     }
@@ -190,6 +210,11 @@ class TunnelForegroundService : Service() {
             publishState(request.failedState("Saved server profile was not found"))
             cleanupTunnel(request.tunnelId, removeStoppedState = false)
             return
+        }
+        if (request.remoteForward) {
+            // A reverse tunnel usually exposes the built-in SSH server (and through it the Agent Bridge);
+            // keep them running even when the activity that normally owns them is gone.
+            ensureEnabledLocalServers(applicationContext)
         }
 
         var desiredLocalPort = request.localPort
@@ -224,6 +249,32 @@ class TunnelForegroundService : Service() {
                         (connection.keepAlive as? KeepAliveRunner)?.maxAliveCount = KEEPALIVE_MAX_UNANSWERED
                     }
                     authenticate(client, config)
+                    val activeClient = checkNotNull(client)
+
+                    if (request.remoteForward) {
+                        // Like `ssh -R`: a failed bind (port still held by a stale session on the server)
+                        // throws here and is retried with backoff.
+                        activeClient.remotePortForwarder.bind(
+                            RemotePortForwarder.Forward(request.remoteHost, request.remotePort),
+                            SocketForwardingConnectListener(InetSocketAddress(LOOPBACK_HOST, request.localPort))
+                        )
+                        activeTunnels[request.tunnelId] = TunnelRuntime(job = activeTunnels[request.tunnelId]?.job, client = activeClient)
+                        reconnectAttempt = 0
+                        publishState(request.runningState(config, request.localPort))
+                        notificationManager().notify(
+                            NOTIFICATION_ID,
+                            createNotification("QuickSSH tunnel active", tunnelNotificationText(_tunnelStates.value), ongoing = true)
+                        )
+                        // Forwarded connections are served on sshj's own threads; only the transport needs watching.
+                        while (request.tunnelId in activeTunnels && activeClient.isConnected) {
+                            delay(TRANSPORT_WATCHDOG_INTERVAL_MS)
+                        }
+                        if (request.tunnelId in activeTunnels) {
+                            throw IOException("SSH tunnel transport lost")
+                        }
+                        publishState(request.stoppedState(config, request.localPort, "Tunnel stopped"))
+                        return
+                    }
 
                     serverSocket = createLoopbackServerSocket(desiredLocalPort)
                     val actualLocalPort = serverSocket.localPort
@@ -237,10 +288,10 @@ class TunnelForegroundService : Service() {
                         request.remoteHost,
                         request.remotePort
                     )
-                    forwarder = client.newLocalPortForwarder(parameters, serverSocket)
+                    forwarder = activeClient.newLocalPortForwarder(parameters, serverSocket)
                     activeTunnels[request.tunnelId] = TunnelRuntime(
                         job = activeTunnels[request.tunnelId]?.job,
-                        client = client,
+                        client = activeClient,
                         forwarder = forwarder,
                         serverSocket = serverSocket
                     )
@@ -253,7 +304,6 @@ class TunnelForegroundService : Service() {
                     // LocalPortForwarder.listen() only watches the local ServerSocket; it never
                     // notices that the SSH transport died. The watchdog closes the forwarder when
                     // the transport is gone so listen() returns and the tunnel reconnects.
-                    val activeClient = checkNotNull(client)
                     val activeForwarder = checkNotNull(forwarder)
                     val transportLost = AtomicBoolean(false)
                     val watchdog = serviceScope.launch {
@@ -287,20 +337,17 @@ class TunnelForegroundService : Service() {
                     }
 
                     val nextAttempt = reconnectAttempt + 1
-                    if (tunnelShouldRetry(error, nextAttempt)) {
+                    if (tunnelShouldRetry(error, nextAttempt, request.persistent)) {
                         reconnectAttempt = nextAttempt
-                        val delayMillis = tunnelReconnectDelayMillis(reconnectAttempt)
-                        publishState(request.reconnectingState(config, actualLocalPort, reconnectAttempt, delayMillis))
+                        val delayMillis = tunnelReconnectDelayMillis(reconnectAttempt, request.persistent)
+                        val statusText = tunnelReconnectStatusText(reconnectAttempt, delayMillis, request.persistent)
+                        publishState(request.reconnectingState(config, actualLocalPort, reconnectAttempt, statusText))
                         notificationManager().notify(
                             NOTIFICATION_ID,
-                            createNotification(
-                                "QuickSSH tunnel reconnecting",
-                                tunnelReconnectStatusText(reconnectAttempt, delayMillis),
-                                ongoing = true
-                            )
+                            createNotification("QuickSSH tunnel reconnecting", statusText, ongoing = true)
                         )
                         activeTunnels[request.tunnelId] = TunnelRuntime(job = activeTunnels[request.tunnelId]?.job)
-                        delay(delayMillis)
+                        awaitReconnect(delayMillis)
                     } else {
                         val message = friendlyTunnelError(error)
                         publishState(request.failedState(message, config, actualLocalPort))
@@ -315,6 +362,12 @@ class TunnelForegroundService : Service() {
         } finally {
             cleanupTunnel(request.tunnelId, removeStoppedState = false)
         }
+    }
+
+    /** Waits out a reconnect backoff, cut short when a network becomes available. */
+    private suspend fun awaitReconnect(delayMillis: Long) {
+        val seen = networkGeneration.value
+        withTimeoutOrNull(delayMillis) { networkGeneration.first { it != seen } }
     }
 
     private fun startForegroundSafely(notification: Notification): Boolean {
@@ -490,7 +543,9 @@ class TunnelForegroundService : Service() {
         val configId: Long,
         val remoteHost: String,
         val remotePort: Int,
-        val localPort: Int
+        val localPort: Int,
+        val remoteForward: Boolean = false,
+        val persistent: Boolean = false
     ) {
         fun connectingState(config: SshConfig, actualLocalPort: Int = localPort): TunnelServiceState {
             return baseState(config, actualLocalPort, TunnelStatus.CONNECTING, "Connecting SSH tunnel...")
@@ -500,12 +555,12 @@ class TunnelForegroundService : Service() {
             config: SshConfig,
             actualLocalPort: Int,
             attempt: Int,
-            delayMillis: Long? = null
+            statusText: String? = null
         ): TunnelServiceState {
-            val message = if (delayMillis == null) {
-                "Reconnecting SSH tunnel (attempt $attempt/$TUNNEL_RECONNECT_MAX_ATTEMPTS)..."
+            val message = statusText ?: if (persistent) {
+                "Reconnecting SSH tunnel (attempt $attempt)..."
             } else {
-                tunnelReconnectStatusText(attempt, delayMillis)
+                "Reconnecting SSH tunnel (attempt $attempt/$TUNNEL_RECONNECT_MAX_ATTEMPTS)..."
             }
             return baseState(config, actualLocalPort, TunnelStatus.CONNECTING, message)
         }
@@ -530,7 +585,9 @@ class TunnelForegroundService : Service() {
                     localHost = LOOPBACK_HOST,
                     localPort = actualLocalPort,
                     status = TunnelStatus.FAILED,
-                    statusText = message
+                    statusText = message,
+                    remoteForward = remoteForward,
+                    persistent = persistent
                 )
             } else {
                 baseState(config, actualLocalPort, TunnelStatus.FAILED, message)
@@ -553,7 +610,9 @@ class TunnelForegroundService : Service() {
                 localHost = LOOPBACK_HOST,
                 localPort = actualLocalPort,
                 status = status,
-                statusText = statusText
+                statusText = statusText,
+                remoteForward = remoteForward,
+                persistent = persistent
             )
         }
 
@@ -563,9 +622,16 @@ class TunnelForegroundService : Service() {
                 val remoteHost = intent.getStringExtra(EXTRA_REMOTE_HOST).orEmpty().trim().ifBlank { LOOPBACK_HOST }
                 val remotePort = intent.getIntExtra(EXTRA_REMOTE_PORT, -1).takeIf { it in 1..MAX_PORT } ?: return null
                 val localPort = intent.getIntExtra(EXTRA_LOCAL_PORT, 0).takeIf { it in 0..MAX_PORT } ?: 0
+                val remoteForward = intent.getBooleanExtra(EXTRA_REMOTE_FORWARD, false)
+                // A reverse tunnel needs a concrete phone-side target port.
+                if (remoteForward && localPort == 0) return null
                 val tunnelId = intent.getStringExtra(EXTRA_TUNNEL_ID)?.takeIf { it.isNotBlank() }
                     ?: "tunnel-$configId-${System.currentTimeMillis()}"
-                return TunnelRequest(tunnelId, configId, remoteHost, remotePort, localPort)
+                return TunnelRequest(
+                    tunnelId, configId, remoteHost, remotePort, localPort,
+                    remoteForward = remoteForward,
+                    persistent = intent.getBooleanExtra(EXTRA_PERSISTENT, false)
+                )
             }
         }
     }
@@ -588,6 +654,8 @@ class TunnelForegroundService : Service() {
         private const val EXTRA_REMOTE_HOST = "extra_remote_host"
         private const val EXTRA_REMOTE_PORT = "extra_remote_port"
         private const val EXTRA_LOCAL_PORT = "extra_local_port"
+        private const val EXTRA_REMOTE_FORWARD = "extra_remote_forward"
+        private const val EXTRA_PERSISTENT = "extra_persistent"
 
         private val _tunnelStates = MutableStateFlow<List<TunnelServiceState>>(emptyList())
         val tunnelStates: StateFlow<List<TunnelServiceState>> = _tunnelStates.asStateFlow()
@@ -604,7 +672,9 @@ class TunnelForegroundService : Service() {
             configId: Long,
             remoteHost: String,
             remotePort: Int,
-            localPort: Int
+            localPort: Int,
+            remoteForward: Boolean = false,
+            persistent: Boolean = false
         ): String {
             val tunnelId = "tunnel-$configId-${System.currentTimeMillis()}"
             val intent = Intent(context, TunnelForegroundService::class.java).apply {
@@ -614,6 +684,8 @@ class TunnelForegroundService : Service() {
                 putExtra(EXTRA_REMOTE_HOST, remoteHost)
                 putExtra(EXTRA_REMOTE_PORT, remotePort)
                 putExtra(EXTRA_LOCAL_PORT, localPort)
+                putExtra(EXTRA_REMOTE_FORWARD, remoteForward)
+                putExtra(EXTRA_PERSISTENT, persistent)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
@@ -621,6 +693,53 @@ class TunnelForegroundService : Service() {
                 context.startService(intent)
             }
             return tunnelId
+        }
+
+        /** Starts [preset] unless an equivalent tunnel is already running or connecting. */
+        fun startPreset(context: Context, preset: SshTunnelPreset, persistent: Boolean = preset.autoStart): String {
+            findActiveTunnelForPreset(preset)?.let { return it.tunnelId }
+            return startTunnel(
+                context = context,
+                configId = preset.workspaceId,
+                remoteHost = preset.remoteHost.trim().ifBlank { LOOPBACK_HOST },
+                remotePort = preset.remotePort,
+                localPort = preset.localPort,
+                remoteForward = preset.isRemoteForward,
+                persistent = persistent
+            )
+        }
+
+        /**
+         * Starts every resident ([SshTunnelPreset.autoStart]) tunnel that is not running yet. Called when the app
+         * opens, at boot and when Android restarts the sticky service; returns how many were started.
+         */
+        suspend fun startAutoStartTunnels(context: Context): Int {
+            val appContext = context.applicationContext
+            val presets = withContext(Dispatchers.IO) {
+                AppDatabase.getDatabase(appContext).sshConfigDao().getAutoStartTunnelPresets()
+            }
+            return presets.count { preset ->
+                if (preset.isRemoteForward && preset.localPort == 0) return@count false
+                if (findActiveTunnelForPreset(preset) != null) return@count false
+                runCatching { startPreset(appContext, preset, persistent = true) }.isSuccess
+            }
+        }
+
+        /** Starts the built-in SSH server and Agent Bridge when they are enabled in Settings (no-op when running). */
+        fun ensureEnabledLocalServers(context: Context) {
+            val appContext = context.applicationContext
+            if (EmbeddedSshServer.isEnabled(appContext)) {
+                EmbeddedSshServer.start(appContext, EmbeddedSshServer.configuredPort(appContext))
+            }
+            if (AgentBridgeService.isBridgeEnabled(appContext)) {
+                runCatching {
+                    AgentBridgeService.start(
+                        context = appContext,
+                        bridgePort = AgentBridgeService.configuredBridgePort(appContext),
+                        termuxSshPort = AgentBridgeService.configuredTermuxSshPort(appContext)
+                    )
+                }
+            }
         }
 
         fun stopTunnel(context: Context, tunnelId: String) {
@@ -668,6 +787,9 @@ class TunnelForegroundService : Service() {
                 runCatching { stopTunnel(appContext, active.tunnelId) }
             }
 
+            if (preset.isRemoteForward) {
+                return@withLock PreConnectTunnelResult(false, preset.localPort, "A reverse (-R) tunnel cannot be a pre-connect tunnel")
+            }
             val tunnelId = if (active != null && active.status == TunnelStatus.CONNECTING) {
                 active.tunnelId
             } else {
@@ -677,7 +799,8 @@ class TunnelForegroundService : Service() {
                         configId = preset.workspaceId,
                         remoteHost = preset.remoteHost,
                         remotePort = preset.remotePort,
-                        localPort = preset.localPort
+                        localPort = preset.localPort,
+                        persistent = preset.autoStart
                     )
                 }.getOrElse { error ->
                     return@withLock PreConnectTunnelResult(
@@ -712,6 +835,7 @@ class TunnelForegroundService : Service() {
         fun findActiveTunnelForPreset(preset: SshTunnelPreset): TunnelServiceState? {
             return _tunnelStates.value.firstOrNull { state ->
                 state.configId == preset.workspaceId &&
+                    state.remoteForward == preset.isRemoteForward &&
                     state.remoteHost.equals(preset.remoteHost.trim().ifBlank { LOOPBACK_HOST }, ignoreCase = true) &&
                     state.remotePort == preset.remotePort &&
                     (preset.localPort == 0 || state.localPort == preset.localPort) &&
@@ -744,10 +868,7 @@ internal fun tunnelNotificationText(states: List<TunnelServiceState>): String {
     val active = states.filter { it.status == TunnelStatus.CONNECTING || it.status == TunnelStatus.RUNNING }
     return when (active.size) {
         0 -> "No active tunnels"
-        1 -> {
-            val tunnel = active.first()
-            "${tunnel.localEndpoint} -> ${tunnel.remoteHost}:${tunnel.remotePort}"
-        }
+        1 -> active.first().routeText
         else -> "Keeping ${active.size} SSH tunnels active"
     }
 }
@@ -761,8 +882,12 @@ internal fun localTunnelParameters(
     return Parameters(localHost, localPort, remoteHost, remotePort)
 }
 
-internal fun tunnelReconnectDelayMillis(attempt: Int): Long {
+/** Ordinary tunnels back off 1s, 2s, 4s; resident ones double up to [PERSISTENT_RECONNECT_MAX_DELAY_MS]. */
+internal fun tunnelReconnectDelayMillis(attempt: Int, persistent: Boolean = false): Long {
     val safeAttempt = attempt.coerceAtLeast(1)
+    if (persistent) {
+        return (1_000L shl (safeAttempt - 1).coerceAtMost(6)).coerceAtMost(PERSISTENT_RECONNECT_MAX_DELAY_MS)
+    }
     return when (safeAttempt) {
         1 -> 1_000L
         2 -> 2_000L
@@ -770,13 +895,18 @@ internal fun tunnelReconnectDelayMillis(attempt: Int): Long {
     }
 }
 
-internal fun tunnelReconnectStatusText(attempt: Int, delayMillis: Long): String {
+internal fun tunnelReconnectStatusText(attempt: Int, delayMillis: Long, persistent: Boolean = false): String {
+    if (persistent) {
+        return "Reconnecting SSH tunnel (attempt ${attempt.coerceAtLeast(1)}) in ${delayMillis / 1000}s..."
+    }
     val safeAttempt = attempt.coerceIn(1, TUNNEL_RECONNECT_MAX_ATTEMPTS)
     return "Reconnecting SSH tunnel (attempt $safeAttempt/$TUNNEL_RECONNECT_MAX_ATTEMPTS) in ${delayMillis / 1000}s..."
 }
 
-internal fun tunnelShouldRetry(error: Throwable, nextAttempt: Int): Boolean {
-    return nextAttempt in 1..TUNNEL_RECONNECT_MAX_ATTEMPTS && tunnelErrorIsRetryable(error)
+/** Resident tunnels retry every retryable error forever; others give up after [TUNNEL_RECONNECT_MAX_ATTEMPTS]. */
+internal fun tunnelShouldRetry(error: Throwable, nextAttempt: Int, persistent: Boolean = false): Boolean {
+    if (!tunnelErrorIsRetryable(error)) return false
+    return if (persistent) nextAttempt >= 1 else nextAttempt in 1..TUNNEL_RECONNECT_MAX_ATTEMPTS
 }
 
 internal fun tunnelErrorIsRetryable(error: Throwable): Boolean {

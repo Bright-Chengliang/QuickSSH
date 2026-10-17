@@ -1,6 +1,11 @@
 package com.quickssh.app.ui.screens
 
 import android.annotation.SuppressLint
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import android.webkit.CookieManager
 import android.webkit.HttpAuthHandler
 import android.webkit.WebView
@@ -30,12 +35,14 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -48,6 +55,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
@@ -56,10 +65,14 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.quickssh.app.R
 import com.quickssh.app.data.SshConfig
 import com.quickssh.app.data.SshTunnelPreset
+import com.quickssh.app.data.TUNNEL_DIRECTION_LOCAL
+import com.quickssh.app.data.TUNNEL_DIRECTION_REMOTE
 import com.quickssh.app.data.TunnelHostGroup
+import com.quickssh.app.data.isRemoteForward
 import com.quickssh.app.data.serverNodeLabel
 import com.quickssh.app.data.tunnelHostGroups
 import com.quickssh.app.data.tunnelPresetDefaultName
+import com.quickssh.app.service.EmbeddedSshServer
 import com.quickssh.app.service.TunnelServiceState
 import com.quickssh.app.service.TunnelStatus
 
@@ -71,6 +84,10 @@ fun TunnelScreen(
     remoteHost: String,
     remotePort: String,
     localPort: String,
+    direction: String,
+    autoStart: Boolean,
+    /** Built-in SSH server port when it is enabled; offered as the reverse tunnel's phone-side target. */
+    embeddedSshPort: Int?,
     presetName: String,
     presetNote: String,
     selectedPresetId: Long?,
@@ -82,6 +99,8 @@ fun TunnelScreen(
     onRemoteHostChange: (String) -> Unit,
     onRemotePortChange: (String) -> Unit,
     onLocalPortChange: (String) -> Unit,
+    onDirectionChange: (String) -> Unit,
+    onAutoStartChange: (Boolean) -> Unit,
     onPresetNameChange: (String) -> Unit,
     onPresetNoteChange: (String) -> Unit,
     onPresetSelected: (SshTunnelPreset) -> Unit,
@@ -96,12 +115,15 @@ fun TunnelScreen(
 ) {
     val language = LocalQuickSshLanguage.current
     val activeTunnels = tunnelStates.filter { it.status == TunnelStatus.CONNECTING || it.status == TunnelStatus.RUNNING }
+    val remoteForward = direction == TUNNEL_DIRECTION_REMOTE
+    val portsValid = remotePort.toIntOrNull()?.let { it in 1..65535 } == true &&
+        (!remoteForward || localPort.toIntOrNull()?.let { it in 1..65535 } == true)
 
     Scaffold(
         topBar = {
             QuickSshPageHeader(
                 title = language.text("SSH 隧道", "SSH tunnels"),
-                subtitle = language.text("本地端口转发与内网服务", "Local port forwarding and private web services")
+                subtitle = language.text("本地 / 反向端口转发与内网服务", "Local / reverse port forwarding and private services")
             )
         },
         bottomBar = bottomBar
@@ -151,11 +173,21 @@ fun TunnelScreen(
                 )
             }
 
+            TunnelDirectionSelector(direction = direction, onDirectionChange = onDirectionChange, language = language)
+
             OutlinedTextField(
                 value = remoteHost,
                 onValueChange = onRemoteHostChange,
-                label = { Text(language.text("远端服务地址", "Remote service address")) },
+                label = {
+                    Text(
+                        if (remoteForward) language.text("服务器监听地址", "Server bind address")
+                        else language.text("远端服务地址", "Remote service address")
+                    )
+                },
                 placeholder = { Text("127.0.0.1") },
+                supportingText = if (remoteForward) {
+                    { Text(language.text("127.0.0.1 = 只有服务器本机可连（最安全）", "127.0.0.1 = reachable only on the server itself (safest)")) }
+                } else null,
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
@@ -164,8 +196,8 @@ fun TunnelScreen(
                 OutlinedTextField(
                     value = remotePort,
                     onValueChange = { onRemotePortChange(it.filter(Char::isDigit).take(5)) },
-                    label = { Text(language.text("远端端口", "Remote port")) },
-                    placeholder = { Text("3000") },
+                    label = { Text(if (remoteForward) language.text("服务器端口", "Server port") else language.text("远端端口", "Remote port")) },
+                    placeholder = { Text(if (remoteForward) "2226" else "3000") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.weight(1f),
                     singleLine = true
@@ -173,18 +205,65 @@ fun TunnelScreen(
                 OutlinedTextField(
                     value = localPort,
                     onValueChange = { onLocalPortChange(it.filter(Char::isDigit).take(5)) },
-                    label = { Text(language.text("手机端口", "Local port")) },
-                    placeholder = { Text(language.text("自动", "Auto")) },
+                    label = { Text(if (remoteForward) language.text("手机目标端口", "Phone target port") else language.text("手机端口", "Local port")) },
+                    placeholder = { Text(if (remoteForward) (embeddedSshPort?.toString() ?: "8025") else language.text("自动", "Auto")) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.weight(1f),
                     singleLine = true
                 )
             }
 
+            if (remoteForward) {
+                ReverseTunnelHint(
+                    serverLabel = selectedConfig?.let { "${it.username}@${it.host}" },
+                    serverPort = remotePort.toIntOrNull(),
+                    embeddedSshPort = embeddedSshPort,
+                    targetPort = localPort.toIntOrNull(),
+                    onUseEmbeddedSshPort = { port -> onLocalPortChange(port.toString()) },
+                    language = language
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(language.text("常驻", "Resident"), style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        language.text(
+                            "保存后立即启动；打开应用、开机后自动连接，断线无限重连",
+                            "Starts on save, with the app and at boot; reconnects without limit"
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                }
+                Switch(checked = autoStart, onCheckedChange = onAutoStartChange)
+            }
+            if (autoStart) {
+                val context = LocalContext.current
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        language.text(
+                            "小米/红米等系统还需允许 QuickSSH「自启动」，否则开机后无法自动恢复。",
+                            "On Xiaomi/Redmi and similar ROMs also allow QuickSSH to auto-start, or it cannot come back after a reboot."
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.outline,
+                        modifier = Modifier.weight(1f)
+                    )
+                    FeedbackTextButton(onClick = { openAutoStartSettings(context) }) {
+                        Text(language.text("去开启", "Open"))
+                    }
+                }
+            }
+
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 ResponsiveTunnelOutlinedButton(
                     onClick = onSavePreset,
-                    enabled = selectedConfig != null && remotePort.toIntOrNull()?.let { it in 1..65535 } == true,
+                    enabled = selectedConfig != null && portsValid,
                     modifier = Modifier.weight(1f),
                     text = if (selectedPresetId == null) language.text("保存预设", "Save preset") else language.text("更新预设", "Update preset")
                 )
@@ -199,7 +278,7 @@ fun TunnelScreen(
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 ResponsiveTunnelButton(
                     onClick = onStartTunnel,
-                    enabled = selectedConfig != null && remotePort.toIntOrNull()?.let { it in 1..65535 } == true,
+                    enabled = selectedConfig != null && portsValid,
                     modifier = Modifier.weight(1f),
                     text = language.text("启动隧道", "Start tunnel")
                 )
@@ -221,6 +300,96 @@ fun TunnelScreen(
                         onStopTunnel = onStopTunnel,
                         onOpenInternal = onOpenInternal,
                         onOpenExternal = onOpenExternal
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Local (`ssh -L`) vs reverse (`ssh -R`) forwarding, with a one-line explanation of the selected mode. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TunnelDirectionSelector(direction: String, onDirectionChange: (String) -> Unit, language: AppLanguage) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(
+                selected = direction != TUNNEL_DIRECTION_REMOTE,
+                onClick = { onDirectionChange(TUNNEL_DIRECTION_LOCAL) },
+                label = { Text(language.text("本地转发 -L", "Local -L")) }
+            )
+            FilterChip(
+                selected = direction == TUNNEL_DIRECTION_REMOTE,
+                onClick = { onDirectionChange(TUNNEL_DIRECTION_REMOTE) },
+                label = { Text(language.text("反向转发 -R", "Reverse -R")) }
+            )
+        }
+        Text(
+            text = if (direction == TUNNEL_DIRECTION_REMOTE) {
+                language.text(
+                    "让服务器的端口通到手机：别人连服务器端口，就连到了手机上的服务（如内置 SSH）。",
+                    "Expose a phone port on the server: connecting to the server port reaches the phone service (e.g. built-in SSH)."
+                )
+            } else {
+                language.text(
+                    "在手机上打开服务器那边的服务：连手机端口，就连到了服务器能访问的地址。",
+                    "Reach a service on the server side from the phone: the phone port leads to the remote address."
+                )
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.outline
+        )
+    }
+}
+
+/** Explains what a reverse tunnel exposes and offers the built-in SSH server as its target. */
+@Composable
+private fun ReverseTunnelHint(
+    serverLabel: String?,
+    serverPort: Int?,
+    embeddedSshPort: Int?,
+    targetPort: Int?,
+    onUseEmbeddedSshPort: (Int) -> Unit,
+    language: AppLanguage
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.small,
+        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.45f)
+    ) {
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            when {
+                embeddedSshPort == null -> Text(
+                    language.text(
+                        "提示：在 设置 → 内置 SSH 服务端 打开后，把手机目标端口设为它的端口，就能从任何地方经服务器登录这台手机（不需要 Termux）。",
+                        "Tip: enable Settings → Built-in SSH server and use its port as the target to log in to this phone through the server from anywhere (no Termux needed)."
+                    ),
+                    style = MaterialTheme.typography.bodySmall
+                )
+                targetPort != embeddedSshPort -> Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        language.text("常用：把内置 SSH 服务端暴露到服务器", "Common: expose the built-in SSH server"),
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f)
+                    )
+                    FeedbackTextButton(onClick = { onUseEmbeddedSshPort(embeddedSshPort) }) {
+                        Text(language.text("填入 $embeddedSshPort", "Use $embeddedSshPort"))
+                    }
+                }
+                else -> {
+                    val port = serverPort ?: 2226
+                    val jump = serverLabel ?: language.text("服务器", "server")
+                    Text(
+                        language.text(
+                            "启动后，在电脑上这样登录手机（密码或公钥见 设置 → 内置 SSH 服务端）：",
+                            "Once running, log in to the phone from a computer (password or key: Settings → Built-in SSH server):"
+                        ),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Text(
+                        "ssh -J $jump -p $port ${EmbeddedSshServer.LOGIN_USER}@127.0.0.1",
+                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                        color = MaterialTheme.colorScheme.primary
                     )
                 }
             }
@@ -464,13 +633,24 @@ private fun TunnelStateRow(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(
-                text = tunnel.serverLabel,
+                text = listOfNotNull(
+                    tunnel.serverLabel,
+                    language.text("反向", "reverse").takeIf { tunnel.remoteForward },
+                    language.text("常驻", "resident").takeIf { tunnel.persistent }
+                ).joinToString(" · "),
                 style = MaterialTheme.typography.titleSmall,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
             Text(
-                text = "${tunnel.localEndpoint} -> ${tunnel.remoteHost}:${tunnel.remotePort}",
+                text = if (tunnel.remoteForward) {
+                    language.text(
+                        "服务器 ${tunnel.remoteHost}:${tunnel.remotePort} → 手机 ${tunnel.localEndpoint}",
+                        "server ${tunnel.remoteHost}:${tunnel.remotePort} → phone ${tunnel.localEndpoint}"
+                    )
+                } else {
+                    tunnel.routeText
+                },
                 style = MaterialTheme.typography.bodyMedium
             )
             Text(
@@ -478,7 +658,7 @@ private fun TunnelStateRow(
                 style = MaterialTheme.typography.bodySmall,
                 color = statusColor
             )
-            if (tunnel.status == TunnelStatus.RUNNING) {
+            if (tunnel.status == TunnelStatus.RUNNING && !tunnel.remoteForward) {
                 Text(
                     text = tunnel.browserUrl,
                     style = MaterialTheme.typography.bodySmall,
@@ -488,17 +668,19 @@ private fun TunnelStateRow(
                 )
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FeedbackTextButton(
-                    onClick = { onOpenInternal(tunnel.browserUrl) },
-                    enabled = tunnel.status == TunnelStatus.RUNNING
-                ) {
-                    Text(language.text("内置打开", "Open in app"))
-                }
-                FeedbackTextButton(
-                    onClick = { onOpenExternal(tunnel.browserUrl) },
-                    enabled = tunnel.status == TunnelStatus.RUNNING
-                ) {
-                    Text(language.text("外部打开", "Open externally"))
+                if (!tunnel.remoteForward) {
+                    FeedbackTextButton(
+                        onClick = { onOpenInternal(tunnel.browserUrl) },
+                        enabled = tunnel.status == TunnelStatus.RUNNING
+                    ) {
+                        Text(language.text("内置打开", "Open in app"))
+                    }
+                    FeedbackTextButton(
+                        onClick = { onOpenExternal(tunnel.browserUrl) },
+                        enabled = tunnel.status == TunnelStatus.RUNNING
+                    ) {
+                        Text(language.text("外部打开", "Open externally"))
+                    }
                 }
                 FeedbackTextButton(
                     onClick = { onStopTunnel(tunnel.tunnelId) },
@@ -612,6 +794,17 @@ private fun ResponsiveTunnelOutlinedButton(
     }
 }
 
+/** MIUI/HyperOS keeps a separate auto-start switch; fall back to the app's system settings page elsewhere. */
+private fun openAutoStartSettings(context: Context) {
+    val miuiAutoStart = Intent().setComponent(
+        ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity")
+    )
+    val appDetails = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
+    listOf(miuiAutoStart, appDetails).firstOrNull { intent ->
+        runCatching { context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess
+    }
+}
+
 internal fun parseTunnelPort(text: String, allowAuto: Boolean): Int? {
     if (allowAuto && text.isBlank()) return 0
     return text.toIntOrNull()?.takeIf { it in 1..65535 }
@@ -619,8 +812,12 @@ internal fun parseTunnelPort(text: String, allowAuto: Boolean): Int? {
 
 internal fun SshTunnelPreset.presetLabel(language: AppLanguage = AppLanguage.ZH): String {
     val base = name.trim().ifBlank { tunnelPresetDefaultName(remoteHost, remotePort) }
+    val resident = if (autoStart) language.text(" · 常驻", " · resident") else ""
+    if (isRemoteForward) {
+        return "$base · " + language.text("反向", "reverse") + " $remoteHost:$remotePort <- $localPort$resident"
+    }
     val local = if (localPort > 0) localPort.toString() else language.text("自动", "auto")
-    return "$base · $remoteHost:$remotePort -> $local"
+    return "$base · $remoteHost:$remotePort -> $local$resident"
 }
 
 internal fun tunnelStatusLabel(statusText: String, language: AppLanguage): String {
@@ -629,11 +826,15 @@ internal fun tunnelStatusLabel(statusText: String, language: AppLanguage): Strin
         statusText == "等待启动隧道" -> "Waiting to start tunnel"
         statusText == "已删除隧道预设" -> "Tunnel preset deleted"
         statusText.startsWith("已保存隧道预设：") -> statusText.replaceFirst("已保存隧道预设：", "Saved tunnel preset: ")
+        statusText.startsWith("已保存并启动常驻隧道：") -> statusText.replaceFirst("已保存并启动常驻隧道：", "Saved and started resident tunnel: ")
+        statusText.startsWith("失败：反向隧道需要填写手机目标端口") -> statusText.replaceFirst("失败：反向隧道需要填写手机目标端口", "Failed: a reverse tunnel needs a phone target port")
         statusText.startsWith("失败：请先选择服务器") -> statusText.replaceFirst("失败：请先选择服务器", "Failed: select a server first")
         statusText.startsWith("失败：远端端口必须是") -> statusText.replaceFirst("失败：远端端口必须是", "Failed: remote port must be")
         statusText.startsWith("失败：手机端口必须是") -> statusText.replaceFirst("失败：手机端口必须是", "Failed: local port must be")
         statusText.startsWith("正在启动隧道：") -> statusText.replaceFirst("正在启动隧道：", "Starting tunnel: ")
         statusText.startsWith("隧道已启动：") -> statusText.replaceFirst("隧道已启动：", "Tunnel started: ")
+        statusText.startsWith("反向隧道已启动：") -> statusText.replaceFirst("反向隧道已启动：", "Reverse tunnel started: ")
+            .replace("服务器 ", "server ").replace("手机 ", "phone ")
         statusText.startsWith("正在连接：") -> statusText.replaceFirst("正在连接：", "Connecting: ")
         statusText.startsWith("正在重连：") -> statusText.replaceFirst("正在重连：", "Reconnecting: ")
         statusText.startsWith("无法打开浏览器：") -> statusText.replaceFirst("无法打开浏览器：", "Unable to open browser: ")

@@ -38,7 +38,8 @@ folders (optional grouping, plus a special "pinned" group)
 servers   = one SSH endpoint + credentials: name, host, port, username, authType
   workspaces = what the user actually opens: name, workDirectory, postConnectCommand,
                terminal settings, persistentSessionMode, folder/pinned, preConnectTunnel
-    tunnels  = local port-forward presets: name, remoteHost, remotePort, localPort (0 = auto)
+    tunnels  = port-forward presets: name, remoteHost, remotePort, localPort (0 = auto),
+               direction (LOCAL = ssh -L, REMOTE = ssh -R), autoStart (resident)
 ```
 
 - A workspace belongs to exactly one server; a server always has at least one workspace
@@ -54,6 +55,14 @@ servers   = one SSH endpoint + credentials: name, host, port, username, authType
   across all workspaces, or `preConnectTunnelId`. Export always uses the bare name or the
   `server/workspace/tunnel` form. In the app, a folder or server card can set one tunnel for all of
   its workspaces at once.
+- Tunnel `direction`: `LOCAL` (default, `ssh -L`) opens phone `127.0.0.1:<localPort>` to
+  `<remoteHost>:<remotePort>` as seen from the server. `REMOTE` (`ssh -R`) makes the server listen on
+  `<remoteHost>:<remotePort>` (bind address, keep `127.0.0.1`) and forwards to phone
+  `127.0.0.1:<localPort>` (required); e.g. `remotePort` 2226 -> `localPort` 8025 exposes the built-in
+  SSH server on a jump host. A REMOTE tunnel can not be a `preConnectTunnel`.
+- `autoStart: true` makes a tunnel resident: QuickSSH starts it right after your API write (best
+  effort while the app is in the background), with the app and at boot, and reconnects it without a
+  retry limit (on MIUI/HyperOS the app must be allowed to auto-start).
 - `authType`: `PASSWORD`, `PRIVATE_KEY` or `LOCAL` (a local shell on the phone; host is the
   shell, e.g. `builtin`, port 0).
 - `persistentSessionMode`: `none`, `tmux`, `screen` or `auto` (Linux/macOS hosts).
@@ -87,8 +96,8 @@ for stdin. Prefer single-quoted JSON in the shell; for text with quotes use a he
 | `folders/create` | `name` | - |
 | `folders/update` | `id` | `name` (rename) |
 | `folders/delete` | `id` | its workspaces become unfiled |
-| `tunnels/create` | `workspaceId`, `remotePort` | `name`, `note`, `remoteHost` (default 127.0.0.1), `localPort` (0 = auto) |
-| `tunnels/update` | `id` | `name`, `note`, `remoteHost`, `remotePort`, `localPort` |
+| `tunnels/create` | `workspaceId`, `remotePort` | `name`, `note`, `remoteHost` (default 127.0.0.1), `localPort` (0 = auto; required for REMOTE), `direction`, `autoStart` |
+| `tunnels/update` | `id` | `name`, `note`, `remoteHost`, `remotePort`, `localPort`, `direction`, `autoStart` |
 | `tunnels/delete` | `id` | clears it as pre-connect tunnel |
 
 Examples:
@@ -170,6 +179,10 @@ ssh -p 8025 quickssh@<phone-ip> quickssh export > ws.json
 ssh -p 8025 quickssh@<phone-ip> quickssh apply - --dry-run < ws.json
 ssh -p 8025 quickssh@<phone-ip> quickssh skill   # this document
 ```
+
+From another network, a resident REMOTE tunnel on a jump host workspace exposes the server, e.g.
+`quickssh call tunnels/create '{"workspaceId":<jump>,"name":"phone-ssh","direction":"REMOTE","remotePort":2226,"localPort":8025,"autoStart":true}'`,
+then `ssh -J <jump-host> -p 2226 quickssh@127.0.0.1`.
 
 Termux sshd (started by the Termux setup command, default port 8023) works the same way with the
 Termux user. To use HTTP or MCP from the other machine, forward the bridge (only loopback targets

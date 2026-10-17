@@ -85,6 +85,9 @@ object AgentBridgeService {
     fun configuredBridgePort(context: Context): Int =
         settings(context).getInt(PREFS_KEY_BRIDGE_PORT, DEFAULT_BRIDGE_PORT)
 
+    fun configuredTermuxSshPort(context: Context): Int =
+        settings(context).getInt(PREFS_KEY_TERMUX_SSH_PORT, DEFAULT_TERMUX_SSH_PORT)
+
     fun isBridgeEnabled(context: Context): Boolean =
         settings(context).getBoolean(PREFS_KEY_BRIDGE_ENABLED, false)
 
@@ -509,6 +512,11 @@ object AgentBridgeService {
                 else -> throw WorkspaceApiException(
                     "Unknown endpoint $method /api/v2/$path. GET tree|export|skill, POST apply or <resource>/<action>"
                 )
+            }
+            if (method == "POST" && !flag("dryRun")) {
+                // A resident tunnel an agent just created or enabled should come up now, not at the next boot.
+                // Best effort: Android may refuse a foreground-service start while the app is in the background.
+                runCatching { TunnelForegroundService.startAutoStartTunnels(context) }
             }
             HttpResponse(body = JSONObject().put("ok", true).put("data", data).toString(2))
         } catch (e: WorkspaceApiException) {

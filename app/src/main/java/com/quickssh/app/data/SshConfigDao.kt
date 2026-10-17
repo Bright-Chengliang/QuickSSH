@@ -32,6 +32,9 @@ interface SshConfigDao {
     @Query("SELECT * FROM ssh_tunnel_presets WHERE id = :id LIMIT 1")
     suspend fun getTunnelPresetById(id: Long): SshTunnelPreset?
 
+    @Query("SELECT * FROM ssh_tunnel_presets WHERE autoStart = 1 ORDER BY id")
+    suspend fun getAutoStartTunnelPresets(): List<SshTunnelPreset>
+
     @Query(
         """
         SELECT * FROM ssh_tunnel_presets

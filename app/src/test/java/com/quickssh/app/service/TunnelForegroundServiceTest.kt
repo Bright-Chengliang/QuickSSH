@@ -122,4 +122,27 @@ class TunnelForegroundServiceTest {
             statusText = status.name
         )
     }
+
+    @Test
+    fun residentTunnelRetriesForeverWithCappedBackoff() {
+        assertTrue(tunnelShouldRetry(IOException("Connection reset by peer"), nextAttempt = 50, persistent = true))
+        assertFalse(tunnelShouldRetry(IOException("Connection reset by peer"), nextAttempt = 50))
+        assertFalse(tunnelShouldRetry(IOException("Exhausted available authentication methods"), nextAttempt = 1, persistent = true))
+        assertEquals(1_000L, tunnelReconnectDelayMillis(1, persistent = true))
+        assertEquals(8_000L, tunnelReconnectDelayMillis(4, persistent = true))
+        assertEquals(60_000L, tunnelReconnectDelayMillis(7, persistent = true))
+        assertEquals(60_000L, tunnelReconnectDelayMillis(40, persistent = true))
+        assertEquals("Reconnecting SSH tunnel (attempt 12) in 60s...", tunnelReconnectStatusText(12, 60_000L, persistent = true))
+    }
+
+    @Test
+    fun reverseTunnelRouteNamesServerAndPhoneSides() {
+        val state = TunnelServiceState(
+            tunnelId = "t", configId = 1L, serverLabel = "jump", sshHost = "jump.example.com",
+            remoteHost = "127.0.0.1", remotePort = 2226, localHost = "127.0.0.1", localPort = 8025,
+            status = TunnelStatus.RUNNING, statusText = "Tunnel running", remoteForward = true, persistent = true
+        )
+        assertEquals("server 127.0.0.1:2226 -> phone 127.0.0.1:8025", state.routeText)
+        assertEquals(state.routeText, tunnelNotificationText(listOf(state)))
+    }
 }

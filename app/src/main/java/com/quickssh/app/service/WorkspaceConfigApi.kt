@@ -9,6 +9,8 @@ import com.quickssh.app.data.SshFolder
 import com.quickssh.app.data.SshServerNode
 import com.quickssh.app.data.SshTunnelPreset
 import com.quickssh.app.data.SshWorkspaceProfile
+import com.quickssh.app.data.TUNNEL_DIRECTION_LOCAL
+import com.quickssh.app.data.TUNNEL_DIRECTION_REMOTE
 import com.quickssh.app.data.WorkspaceSnapshot
 import com.quickssh.app.data.WorkspaceStore
 import com.quickssh.app.data.snapshot
@@ -50,7 +52,7 @@ class WorkspaceConfigApi(
             "terminalWrapEnabled", "terminalTerm", "terminalShortcuts", "persistentSessionMode",
             "folder", "folderId", "pinned", "preConnectTunnel", "preConnectTunnelId"
         )
-        private val TUNNEL_KEYS = setOf("id", "workspaceId", "name", "note", "remoteHost", "remotePort", "localPort")
+        private val TUNNEL_KEYS = setOf("id", "workspaceId", "name", "note", "remoteHost", "remotePort", "localPort", "direction", "autoStart")
     }
 
     // ---------------------------------------------------------------- reads
@@ -619,6 +621,11 @@ class WorkspaceConfigApi(
                     }
             }
         }
+        if (presetId != workspace.preConnectTunnelPresetId &&
+            s.tunnels.firstOrNull { it.id == presetId }?.direction == TUNNEL_DIRECTION_REMOTE
+        ) {
+            throw WorkspaceApiException("A REMOTE (ssh -R) tunnel cannot be a pre-connect tunnel")
+        }
         return presetId
     }
 
@@ -642,12 +649,21 @@ class WorkspaceConfigApi(
         }
         val localPort = obj.intOrKeep("localPort", base.localPort)
         if (localPort !in 0..65535) throw WorkspaceApiException("localPort must be 0-65535 (0 = auto)")
+        val direction = obj.textOrKeep("direction", base.direction)?.uppercase() ?: TUNNEL_DIRECTION_LOCAL
+        if (direction != TUNNEL_DIRECTION_LOCAL && direction != TUNNEL_DIRECTION_REMOTE) {
+            throw WorkspaceApiException("direction must be LOCAL (ssh -L) or REMOTE (ssh -R)")
+        }
+        if (direction == TUNNEL_DIRECTION_REMOTE && localPort == 0) {
+            throw WorkspaceApiException("a REMOTE tunnel needs localPort: the phone port the server forwards to (e.g. 8025)")
+        }
         return base.copy(
             name = obj.textOrKeep("name", base.name.ifBlank { null }) ?: tunnelPresetDefaultName(remoteHost, remotePort),
             note = obj.textOrKeep("note", base.note),
             remoteHost = remoteHost,
             remotePort = remotePort,
-            localPort = localPort
+            localPort = localPort,
+            direction = direction,
+            autoStart = obj.boolOrKeep("autoStart", base.autoStart) ?: false
         )
     }
 
@@ -693,7 +709,9 @@ class WorkspaceConfigApi(
         "note".takeIf { old.note != new.note },
         "remoteHost".takeIf { old.remoteHost != new.remoteHost },
         "remotePort".takeIf { old.remotePort != new.remotePort },
-        "localPort".takeIf { old.localPort != new.localPort }
+        "localPort".takeIf { old.localPort != new.localPort },
+        "direction".takeIf { old.direction != new.direction },
+        "autoStart".takeIf { old.autoStart != new.autoStart }
     )
 
     // ---------------------------------------------------------------- helpers
@@ -788,6 +806,8 @@ class WorkspaceConfigApi(
         .put("remoteHost", preset.remoteHost)
         .put("remotePort", preset.remotePort)
         .put("localPort", preset.localPort)
+        .put("direction", preset.direction)
+        .put("autoStart", preset.autoStart)
 }
 
 private fun Any?.orJsonNull(): Any = this ?: JSONObject.NULL

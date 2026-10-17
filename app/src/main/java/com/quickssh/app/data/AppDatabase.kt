@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [SshServerNode::class, SshWorkspaceProfile::class, SshTunnelPreset::class, TransferHistoryEntry::class, SshFolder::class], version = 12, exportSchema = false)
+@Database(entities = [SshServerNode::class, SshWorkspaceProfile::class, SshTunnelPreset::class, TransferHistoryEntry::class, SshFolder::class], version = 13, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun sshConfigDao(): SshConfigDao
     abstract fun transferHistoryDao(): TransferHistoryDao
@@ -83,6 +83,12 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                addTunnelDirectionColumns(db)
+            }
+        }
+
         internal fun migrations(): Array<Migration> {
             return arrayOf(
                 MIGRATION_1_2,
@@ -95,7 +101,8 @@ abstract class AppDatabase : RoomDatabase() {
                 MIGRATION_8_9,
                 MIGRATION_9_10,
                 MIGRATION_10_11,
-                MIGRATION_11_12
+                MIGRATION_11_12,
+                MIGRATION_12_13
             )
         }
 
@@ -308,6 +315,17 @@ abstract class AppDatabase : RoomDatabase() {
             val columns = columnNames(database, "ssh_workspaces")
             if ("preConnectTunnelPresetId" !in columns) {
                 database.execSQL("ALTER TABLE ssh_workspaces ADD COLUMN preConnectTunnelPresetId INTEGER DEFAULT NULL")
+            }
+        }
+
+        private fun addTunnelDirectionColumns(database: SupportSQLiteDatabase) {
+            createTunnelPresetTable(database)
+            val columns = columnNames(database, "ssh_tunnel_presets")
+            if ("direction" !in columns) {
+                database.execSQL("ALTER TABLE ssh_tunnel_presets ADD COLUMN direction TEXT NOT NULL DEFAULT 'LOCAL'")
+            }
+            if ("autoStart" !in columns) {
+                database.execSQL("ALTER TABLE ssh_tunnel_presets ADD COLUMN autoStart INTEGER NOT NULL DEFAULT 0")
             }
         }
 
@@ -526,6 +544,8 @@ abstract class AppDatabase : RoomDatabase() {
                     remotePort INTEGER NOT NULL,
                     localPort INTEGER NOT NULL,
                     updateTime INTEGER NOT NULL,
+                    direction TEXT NOT NULL DEFAULT 'LOCAL',
+                    autoStart INTEGER NOT NULL DEFAULT 0,
                     FOREIGN KEY(workspaceId) REFERENCES ssh_workspaces(id) ON UPDATE NO ACTION ON DELETE CASCADE
                 )
                 """.trimIndent()

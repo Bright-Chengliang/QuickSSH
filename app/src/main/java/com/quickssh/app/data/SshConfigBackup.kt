@@ -35,7 +35,9 @@ data class SshTunnelPresetBackupRecord(
     val note: String?,
     val remoteHost: String,
     val remotePort: Int,
-    val localPort: Int
+    val localPort: Int,
+    val direction: String = TUNNEL_DIRECTION_LOCAL,
+    val autoStart: Boolean = false
 )
 
 object SshConfigBackupCodec {
@@ -83,6 +85,8 @@ object SshConfigBackupCodec {
                         .put("remoteHost", preset.remoteHost.ifBlank { "127.0.0.1" })
                         .put("remotePort", preset.remotePort.coerceIn(1, 65535))
                         .put("localPort", preset.localPort.coerceIn(0, 65535))
+                        .put("direction", normalizedTunnelDirection(preset.direction))
+                        .put("autoStart", preset.autoStart)
                 )
             }
             servers.put(
@@ -273,7 +277,9 @@ object SshConfigBackupCodec {
                         note = item.optNullableString("note"),
                         remoteHost = remoteHost,
                         remotePort = remotePort,
-                        localPort = localPort
+                        localPort = localPort,
+                        direction = normalizedTunnelDirection(item.optString("direction")),
+                        autoStart = item.optBoolean("autoStart", false)
                     )
                 )
             }
