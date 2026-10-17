@@ -70,7 +70,9 @@ import com.quickssh.app.data.TRANSFER_HISTORY_RETAIN_LIMIT
 import com.quickssh.app.data.copiedWorkspaceName
 import com.quickssh.app.data.serverIdentityKey
 import com.quickssh.app.data.serverNodeLabel
+import com.quickssh.app.data.tunnelHostGroups
 import com.quickssh.app.data.tunnelPresetDefaultName
+import com.quickssh.app.data.tunnelPresetsForHost
 import com.quickssh.app.data.transferContextLabel
 import com.quickssh.app.data.workspaceLabel
 import com.quickssh.app.security.KeystoreManager
@@ -2333,16 +2335,17 @@ class MainActivity : FragmentActivity() {
                 )
             }
             "TUNNELS" -> {
-                val visibleTunnelPresets = tunnelPresets.filter { preset ->
-                    preset.workspaceId == tunnelConfig?.id
-                }
+                // Tunnels are organised per remote host IP: presets of every workspace on that host are shared.
+                val tunnelGroups = remember(configs) { tunnelHostGroups(configs) }
+                val selectedTunnelGroup = tunnelGroups.firstOrNull { group -> group.workspaces.any { it.id == tunnelConfig?.id } }
+                val visibleTunnelPresets = tunnelPresetsForHost(tunnelPresets, selectedTunnelGroup)
                 LaunchedEffect(configs, tunnelConfig?.id) {
                     if (configs.isNotEmpty()) {
                         val savedConfigId = settings
                             .getLong(KEY_TUNNEL_CONFIG_ID, -1L)
                             .takeIf { it > 0L }
                         val resolved = resolveTunnelConfig(
-                            configs = configs,
+                            configs = tunnelGroups.flatMap { it.workspaces },
                             currentConfigId = tunnelConfig?.id,
                             savedConfigId = savedConfigId
                         )
@@ -2437,9 +2440,12 @@ class MainActivity : FragmentActivity() {
                             else -> {
                                 val remoteHost = tunnelRemoteHost.trim().ifBlank { TunnelForegroundService.LOOPBACK_HOST }
                                 val now = System.currentTimeMillis()
+                                // An existing preset stays with the workspace that owns it (other workspaces may use
+                                // it as their pre-connect tunnel); new ones go to the host's selected workspace.
+                                val ownerId = tunnelPresets.firstOrNull { it.id == selectedTunnelPresetId }?.workspaceId ?: config.id
                                 val preset = SshTunnelPreset(
                                     id = selectedTunnelPresetId ?: 0L,
-                                    workspaceId = config.id,
+                                    workspaceId = ownerId,
                                     name = tunnelPresetName.trim().ifBlank { tunnelPresetDefaultName(remoteHost, remotePortValue) },
                                     note = tunnelPresetNote.trim().takeIf { it.isNotEmpty() },
                                     remoteHost = remoteHost,
@@ -2471,7 +2477,10 @@ class MainActivity : FragmentActivity() {
                         }
                     },
                     onStartTunnel = {
-                        val config = tunnelConfig
+                        // A preset runs over its own workspace's SSH login; ad-hoc forwards use the selected host's.
+                        val config = tunnelPresets.firstOrNull { it.id == selectedTunnelPresetId }
+                            ?.let { preset -> configs.firstOrNull { it.id == preset.workspaceId } }
+                            ?: tunnelConfig
                         val remotePortValue = parseTunnelPort(tunnelRemotePort, allowAuto = false)
                         val localPortValue = parseTunnelPort(tunnelLocalPort, allowAuto = true)
                         when {

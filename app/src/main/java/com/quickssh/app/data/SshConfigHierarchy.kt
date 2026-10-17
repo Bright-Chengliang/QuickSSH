@@ -39,6 +39,40 @@ fun groupPreConnectTargetIds(workspaces: List<SshConfig>, preset: SshTunnelPrese
         .filter { !it.isLocalSession && it.authType != "LOCAL" && it.id != preset?.workspaceId }
         .map { it.id }
 
+/**
+ * Tunnel page entry: every workspace that reaches the same remote host IP. A tunnel only needs an SSH
+ * login on that machine, so workspaces (and their presets) are merged per host instead of listed apart.
+ */
+data class TunnelHostGroup(val key: String, val label: String, val workspaces: List<SshConfig>) {
+    /** Workspace whose SSH login carries newly created tunnels for this host (first in display order). */
+    val primary: SshConfig get() = workspaces.first()
+}
+
+/**
+ * Host IP, lower-cased. Loopback hosts also key on the port: `127.0.0.1:<port>` workspaces are usually
+ * different machines reached through different pre-connect tunnels.
+ */
+fun SshConfig.tunnelHostKey(): String {
+    val normalized = host.trim().lowercase()
+    val loopback = normalized == "localhost" || normalized == "::1" || normalized.startsWith("127.")
+    return if (loopback) "$normalized:$port" else normalized
+}
+
+/** Remote hosts in home-screen order; local shells cannot forward ports and are left out. */
+fun tunnelHostGroups(configs: List<SshConfig>): List<TunnelHostGroup> =
+    groupedSshServers(configs.filterNot { it.isLocalSession || it.authType == "LOCAL" })
+        .flatMap { it.workspaces }
+        .groupBy { it.tunnelHostKey() }
+        .map { (key, workspaces) -> TunnelHostGroup(key, key, workspaces) }
+
+/** Presets of every workspace on [group]'s host; identical forwards saved under several workspaces are listed once. */
+fun tunnelPresetsForHost(presets: List<SshTunnelPreset>, group: TunnelHostGroup?): List<SshTunnelPreset> {
+    val workspaceIds = group?.workspaces?.map { it.id }?.toSet() ?: return emptyList()
+    return presets
+        .filter { it.workspaceId in workspaceIds }
+        .distinctBy { listOf(it.name.trim(), it.remoteHost.trim().lowercase(), it.remotePort, it.localPort) }
+}
+
 fun serverNodeFieldsDiffer(left: SshConfig, right: SshConfig): Boolean {
     return left.serverDisplayName != right.serverDisplayName ||
         left.host != right.host ||

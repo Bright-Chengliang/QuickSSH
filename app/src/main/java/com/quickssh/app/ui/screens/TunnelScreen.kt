@@ -56,10 +56,10 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.quickssh.app.R
 import com.quickssh.app.data.SshConfig
 import com.quickssh.app.data.SshTunnelPreset
-import com.quickssh.app.data.groupedSshServers
+import com.quickssh.app.data.TunnelHostGroup
+import com.quickssh.app.data.serverNodeLabel
+import com.quickssh.app.data.tunnelHostGroups
 import com.quickssh.app.data.tunnelPresetDefaultName
-import com.quickssh.app.data.transferContextLabel
-import com.quickssh.app.data.workspaceLabel
 import com.quickssh.app.service.TunnelServiceState
 import com.quickssh.app.service.TunnelStatus
 
@@ -511,40 +511,56 @@ private fun TunnelStateRow(
     }
 }
 
+/** Picks a remote host; workspaces sharing its IP are one entry, and the host's first workspace is selected. */
 @Composable
 private fun TunnelServerSelector(configs: List<SshConfig>, selectedConfig: SshConfig?, onConfigSelected: (SshConfig) -> Unit) {
     val language = LocalQuickSshLanguage.current
     var expanded by remember { mutableStateOf(false) }
-    val groups by remember(configs) { derivedStateOf { groupedSshServers(configs) } }
+    val groups by remember(configs) { derivedStateOf { tunnelHostGroups(configs) } }
+    val selectedGroup = groups.firstOrNull { group -> group.workspaces.any { it.id == selectedConfig?.id } }
     Box(modifier = Modifier.fillMaxWidth()) {
         ResponsiveTunnelOutlinedButton(
             onClick = { expanded = true },
             modifier = Modifier.fillMaxWidth(),
-            text = selectedConfig?.transferContextLabel() ?: language.text("选择服务器 / 工作区", "Select server / workspace"),
+            text = selectedGroup?.let { tunnelHostLabel(it, language) } ?: language.text("选择主机", "Select host"),
             trailingIcon = { Icon(imageVector = Icons.Default.KeyboardArrowDown, contentDescription = language.text("展开", "Expand")) }
         )
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             groups.forEach { group ->
                 DropdownMenuItem(
-                    text = { Text(group.displayName, style = MaterialTheme.typography.labelLarge) },
-                    enabled = false,
-                    onClick = {}
-                )
-                group.workspaces.forEach { config ->
-                    DropdownMenuItem(
-                        text = { Text("  ${config.workspaceLabel()}") },
-                        onClick = {
-                            expanded = false
-                            onConfigSelected(config)
+                    text = {
+                        Column {
+                            Text(group.label, style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                tunnelHostDetail(group, language),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.outline,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
-                    )
-                }
+                    },
+                    onClick = {
+                        expanded = false
+                        onConfigSelected(group.primary)
+                    }
+                )
             }
-            if (configs.isEmpty()) {
-                DropdownMenuItem(text = { Text(language.text("暂无服务器配置", "No server profiles")) }, onClick = { expanded = false })
+            if (groups.isEmpty()) {
+                DropdownMenuItem(text = { Text(language.text("暂无远程主机", "No remote hosts")) }, onClick = { expanded = false })
             }
         }
     }
+}
+
+internal fun tunnelHostLabel(group: TunnelHostGroup, language: AppLanguage): String =
+    "${group.label} · ${tunnelHostDetail(group, language)}"
+
+/** Server names on that host and how many workspaces share it. */
+internal fun tunnelHostDetail(group: TunnelHostGroup, language: AppLanguage): String {
+    val servers = group.workspaces.map { it.serverNodeLabel() }.distinct().joinToString(", ")
+    val count = group.workspaces.size
+    return servers + language.text(" · $count 个工作区", " · $count workspace${if (count == 1) "" else "s"}")
 }
 
 @Composable
