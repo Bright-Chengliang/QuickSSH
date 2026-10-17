@@ -2006,6 +2006,18 @@ class MainActivity : FragmentActivity() {
                                         },
                                         onFailure = { it.message ?: it.javaClass.simpleName }
                                     )
+                            },
+                            onSetUpReverseTunnel = {
+                                selectedTunnelPresetId = null
+                                tunnelPresetName = "QuickSSH-SSH-reverse"
+                                tunnelPresetNote = ""
+                                tunnelRemoteHost = TunnelForegroundService.LOOPBACK_HOST
+                                tunnelRemotePort = ""
+                                tunnelLocalPort = embeddedSshPort.toString()
+                                tunnelDirection = TUNNEL_DIRECTION_REMOTE
+                                tunnelAutoStart = true
+                                tunnelStatusText = "选择要挂靠的服务器，填写服务器端口（如 2226）后点「保存预设」"
+                                currentScreen = "TUNNELS"
                             }
                         )
                     },
