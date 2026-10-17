@@ -277,4 +277,45 @@ class WorkspaceConfigApiTest {
             api(seededStore()).apply(JSONObject("""{"servers":[{"name":"ghost"}]}"""), prune = false)
         }
     }
+
+    @Test
+    fun reverseTunnelNeedsPhonePortAndValidDirection() {
+        val store = seededStore()
+        expectError("REMOTE tunnel needs localPort") {
+            api(store).call("tunnels/create", JSONObject("""{"workspaceId":11,"direction":"REMOTE","remotePort":2226}"""))
+        }
+        expectError("direction must be") {
+            api(store).call("tunnels/create", JSONObject("""{"workspaceId":11,"direction":"SIDEWAYS","remotePort":2226,"localPort":8025}"""))
+        }
+        runBlocking {
+            api(store).call(
+                "tunnels/create",
+                JSONObject("""{"workspaceId":11,"name":"phone-ssh","direction":"remote","remotePort":2226,"localPort":8025,"autoStart":true}""")
+            )
+        }
+        val saved = runBlocking { store.snapshot() }.tunnels.single { it.name == "phone-ssh" }
+        assertEquals("REMOTE", saved.direction)
+        assertTrue(saved.autoStart)
+    }
+
+    @Test
+    fun reverseTunnelSurvivesExportApplyAndCannotBePreConnect() = runBlocking {
+        val store = seededStore()
+        api(store).call(
+            "tunnels/create",
+            JSONObject("""{"workspaceId":11,"name":"phone-ssh","direction":"REMOTE","remotePort":2226,"localPort":8025,"autoStart":true}""")
+        )
+        val exported = api(store).exportDocument()
+        val tunnel = exported.getJSONArray("servers").getJSONObject(0).getJSONArray("workspaces")
+            .let { workspaces -> (0 until workspaces.length()).map { workspaces.getJSONObject(it) } }
+            .single { it.getString("name") == "logs" }.getJSONArray("tunnels").getJSONObject(0)
+        assertEquals("REMOTE", tunnel.getString("direction"))
+        assertTrue(tunnel.getBoolean("autoStart"))
+        val result = api(store).apply(exported, prune = false)
+        assertTrue(result.toString(), result.getJSONArray("changes").length() == 0)
+
+        expectError("cannot be a pre-connect tunnel") {
+            api(store).call("workspaces/update", JSONObject("""{"id":20,"preConnectTunnel":"gpu/logs/phone-ssh"}"""))
+        }
+    }
 }

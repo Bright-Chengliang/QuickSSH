@@ -126,5 +126,22 @@ data class SshTunnelPreset(
     val remoteHost: String = "127.0.0.1",
     val remotePort: Int,
     val localPort: Int = 0,
-    val updateTime: Long = System.currentTimeMillis()
+    val updateTime: Long = System.currentTimeMillis(),
+    /**
+     * [TUNNEL_DIRECTION_LOCAL] (`ssh -L`: phone 127.0.0.1:[localPort] -> [remoteHost]:[remotePort] seen from the
+     * server) or [TUNNEL_DIRECTION_REMOTE] (`ssh -R`: the server listens on [remoteHost]:[remotePort] and forwards
+     * to phone 127.0.0.1:[localPort], which is then required).
+     */
+    val direction: String = TUNNEL_DIRECTION_LOCAL,
+    /** Resident tunnel: started with the app and at boot, and reconnected without a retry limit. */
+    val autoStart: Boolean = false
 )
+
+const val TUNNEL_DIRECTION_LOCAL = "LOCAL"
+const val TUNNEL_DIRECTION_REMOTE = "REMOTE"
+
+val SshTunnelPreset.isRemoteForward: Boolean get() = direction == TUNNEL_DIRECTION_REMOTE
+
+/** Unknown or blank directions are treated as local forwards. */
+fun normalizedTunnelDirection(value: String?): String =
+    if (value.equals(TUNNEL_DIRECTION_REMOTE, ignoreCase = true)) TUNNEL_DIRECTION_REMOTE else TUNNEL_DIRECTION_LOCAL

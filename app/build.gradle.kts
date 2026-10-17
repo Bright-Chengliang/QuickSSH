@@ -12,8 +12,8 @@ android {
         applicationId = "com.quickssh.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 28
-        versionName = "1.24.1"
+        versionCode = 30
+        versionName = "1.25.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

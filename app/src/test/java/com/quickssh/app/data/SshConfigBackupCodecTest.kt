@@ -148,4 +148,16 @@ class SshConfigBackupCodecTest {
             )
         )
     }
+
+    @Test
+    fun backupRoundTripPreservesReverseResidentTunnel() {
+        val reverse = SshTunnelPresetBackupRecord(
+            name = "phone-ssh", note = null, remoteHost = "127.0.0.1", remotePort = 2226, localPort = 8025,
+            direction = TUNNEL_DIRECTION_REMOTE, autoStart = true
+        )
+        val decoded = SshConfigBackupCodec.decode(
+            SshConfigBackupCodec.encode(listOf(backupRecord().copy(tunnelPresets = listOf(reverse))))
+        )
+        assertEquals(reverse, decoded.single().tunnelPresets.single())
+    }
 }

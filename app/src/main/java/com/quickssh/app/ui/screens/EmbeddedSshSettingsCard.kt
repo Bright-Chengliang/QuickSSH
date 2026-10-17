@@ -56,12 +56,15 @@ fun EmbeddedSshSettingsCard(
     onPortChange: (Int) -> Unit,
     onPasswordAuthChange: (Boolean) -> Unit,
     onRegeneratePassword: () -> Unit,
-    onSaveAuthorizedKeys: (String) -> String?
+    onSaveAuthorizedKeys: (String) -> String?,
+    /** Opens the tunnel page prefilled with a reverse tunnel to this server, for access from other networks. */
+    onSetUpReverseTunnel: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     var portText by remember(port) { mutableStateOf(port.toString()) }
     var keysText by remember(authorizedKeys) { mutableStateOf(authorizedKeys) }
     var keysMessage by remember { mutableStateOf<String?>(null) }
+    var passwordVisible by remember { mutableStateOf(false) }
 
     fun copy(label: String, text: String, toast: String) {
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -151,42 +154,46 @@ fun EmbeddedSshSettingsCard(
 
             if (running) {
                 val hosts = lanAddresses.ifEmpty { listOf("<phone-ip>") }
+                val firstHost = hosts.first()
+                GuideStep(
+                    number = 1,
+                    title = language.text("在电脑终端运行（电脑和手机需在同一 Wi-Fi）", "On your computer, run (same Wi-Fi as the phone)")
+                )
                 hosts.forEach { host ->
                     val command = "ssh -p ${state.port} ${EmbeddedSshServer.LOGIN_USER}@$host"
-                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = command,
-                            style = MaterialTheme.typography.bodySmall,
-                            fontFamily = FontFamily.Monospace,
-                            modifier = Modifier.weight(1f)
-                        )
-                        FeedbackTextButton(onClick = {
-                            copy("quickssh_ssh_command", command, language.text("已复制 SSH 登录命令", "Copied SSH command"))
-                        }) {
-                            Text(language.text("复制", "Copy"))
-                        }
+                    CommandRow(command = command, copyLabel = language.text("复制", "Copy")) {
+                        copy("quickssh_ssh_command", command, language.text("已复制 SSH 登录命令", "Copied SSH command"))
                     }
                 }
-                state.hostKeyFingerprint?.let { fingerprint ->
-                    Text(
-                        text = language.text("主机指纹: ", "Host key: ") + fingerprint,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.outline
-                    )
-                }
+                GuideStep(
+                    number = 2,
+                    title = if (passwordAuthEnabled) {
+                        language.text(
+                            "首次连接问 yes/no 时输入 yes；问 password 时粘贴下方密码（输入时不显示字符，属正常）",
+                            "Answer yes to the host-key question, then paste the password below at the password prompt (it stays invisible while typing)"
+                        )
+                    } else {
+                        language.text("密码登录已关闭，只能用第 3 步加入的公钥登录", "Password login is off; only keys added in step 3 can log in")
+                    }
+                )
             }
 
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = language.text("允许密码登录", "Allow password login"),
+                        text = language.text("允许用密码登录这台手机", "Allow password login to this phone"),
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Text(
-                        text = language.text("密码: ", "Password: ") + password.take(3) + "…" + password.takeLast(3),
+                        text = language.text("密码: ", "Password: ") +
+                            if (passwordVisible) password else password.take(3) + "…" + password.takeLast(3),
                         style = MaterialTheme.typography.labelSmall,
+                        fontFamily = if (passwordVisible) FontFamily.Monospace else null,
                         color = MaterialTheme.colorScheme.outline
                     )
+                }
+                FeedbackTextButton(onClick = { passwordVisible = !passwordVisible }) {
+                    Text(if (passwordVisible) language.text("隐藏", "Hide") else language.text("显示", "Show"))
                 }
                 FeedbackTextButton(onClick = {
                     copy("quickssh_ssh_password", password, language.text("已复制 SSH 登录密码", "Copied SSH password"))
@@ -197,6 +204,58 @@ fun EmbeddedSshSettingsCard(
                     Text(language.text("重置", "Reset"))
                 }
                 Switch(checked = passwordAuthEnabled, onCheckedChange = onPasswordAuthChange)
+            }
+            Text(
+                text = language.text(
+                    "这个密码只用于电脑等设备登录本手机，与你在 QuickSSH 里连接服务器用的密码无关。",
+                    "This password only lets other devices log in to this phone; it has nothing to do with the passwords QuickSSH uses to reach your servers."
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.outline
+            )
+
+            if (running) {
+                val host = lanAddresses.firstOrNull() ?: "<phone-ip>"
+                // `cat` is Get-Content in PowerShell, so the same line works there and in bash/zsh.
+                val addKeyCommand = "cat ~/.ssh/id_ed25519.pub | ssh -p ${state.port} ${EmbeddedSshServer.LOGIN_USER}@$host " +
+                    "\"mkdir -p ~/.ssh && cat >> ~/${EmbeddedSshServer.AUTHORIZED_KEYS_HOME_PATH}\""
+                GuideStep(
+                    number = 3,
+                    title = language.text(
+                        "免密码（推荐）：在电脑运行下面一行，输入一次密码后，以后都免密登录",
+                        "Passwordless (recommended): run this once on the computer, enter the password once, never again"
+                    )
+                )
+                CommandRow(command = addKeyCommand, copyLabel = language.text("复制", "Copy")) {
+                    copy("quickssh_ssh_add_key", addKeyCommand, language.text("已复制添加公钥命令", "Copied add-key command"))
+                }
+                Text(
+                    text = language.text(
+                        "电脑上没有 ~/.ssh/id_ed25519.pub 时，先运行 ssh-keygen -t ed25519 一路回车生成。也可以直接把公钥粘贴到下面的框里保存。",
+                        "No ~/.ssh/id_ed25519.pub yet? Run ssh-keygen -t ed25519 and press Enter throughout. You can also paste a key into the box below."
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.outline
+                )
+                GuideStep(
+                    number = 4,
+                    title = language.text(
+                        "不在同一网络？在 隧道 页加一条「反向转发」常驻隧道，把本端口挂到你的服务器上",
+                        "Different network? Add a resident reverse tunnel on the Tunnels page to expose this port on your server"
+                    )
+                )
+                onSetUpReverseTunnel?.let { action ->
+                    FeedbackTextButton(onClick = action) {
+                        Text(language.text("去设置反向隧道", "Set up a reverse tunnel"))
+                    }
+                }
+                state.hostKeyFingerprint?.let { fingerprint ->
+                    Text(
+                        text = language.text("主机指纹: ", "Host key: ") + fingerprint,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                }
             }
 
             OutlinedTextField(
@@ -230,6 +289,36 @@ fun EmbeddedSshSettingsCard(
                     Text(language.text("保存", "Save"))
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun GuideStep(number: Int, title: String) {
+    Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Surface(shape = RoundedCornerShape(50), color = MaterialTheme.colorScheme.primary) {
+            Text(
+                text = number.toString(),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+            )
+        }
+        Text(text = title, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+    }
+}
+
+@Composable
+private fun CommandRow(command: String, copyLabel: String, onCopy: () -> Unit) {
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text = command,
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = FontFamily.Monospace,
+            modifier = Modifier.weight(1f)
+        )
+        FeedbackTextButton(onClick = onCopy) {
+            Text(copyLabel)
         }
     }
 }

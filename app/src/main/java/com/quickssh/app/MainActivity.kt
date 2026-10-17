@@ -70,7 +70,12 @@ import com.quickssh.app.data.TRANSFER_HISTORY_RETAIN_LIMIT
 import com.quickssh.app.data.copiedWorkspaceName
 import com.quickssh.app.data.serverIdentityKey
 import com.quickssh.app.data.serverNodeLabel
+import com.quickssh.app.data.tunnelHostGroups
 import com.quickssh.app.data.tunnelPresetDefaultName
+import com.quickssh.app.data.TUNNEL_DIRECTION_LOCAL
+import com.quickssh.app.data.TUNNEL_DIRECTION_REMOTE
+import com.quickssh.app.data.normalizedTunnelDirection
+import com.quickssh.app.data.tunnelPresetsForHost
 import com.quickssh.app.data.transferContextLabel
 import com.quickssh.app.data.workspaceLabel
 import com.quickssh.app.security.KeystoreManager
@@ -637,6 +642,8 @@ class MainActivity : FragmentActivity() {
         var tunnelPresetName by remember { mutableStateOf("") }
         var tunnelPresetNote by remember { mutableStateOf("") }
         var selectedTunnelPresetId by remember { mutableStateOf<Long?>(null) }
+        var tunnelDirection by remember { mutableStateOf(TUNNEL_DIRECTION_LOCAL) }
+        var tunnelAutoStart by remember { mutableStateOf(false) }
         var tunnelStatusText by remember { mutableStateOf("等待启动隧道") }
         var tunnelWebUrl by remember { mutableStateOf<String?>(null) }
         val queuedTransfers = remember { mutableStateListOf<QueuedTransferRequest>() }
@@ -741,6 +748,11 @@ class MainActivity : FragmentActivity() {
 
         LaunchedEffect(Unit) {
             runCatching { migrateLegacyTransferTasks(settings) }
+        }
+
+        LaunchedEffect(Unit) {
+            // Resident tunnels (e.g. a reverse tunnel exposing the built-in SSH server) come up with the app.
+            runCatching { TunnelForegroundService.startAutoStartTunnels(applicationContext) }
         }
 
         LaunchedEffect(privacyModeEnabled) {
@@ -1994,6 +2006,18 @@ class MainActivity : FragmentActivity() {
                                         },
                                         onFailure = { it.message ?: it.javaClass.simpleName }
                                     )
+                            },
+                            onSetUpReverseTunnel = {
+                                selectedTunnelPresetId = null
+                                tunnelPresetName = "QuickSSH-SSH-reverse"
+                                tunnelPresetNote = ""
+                                tunnelRemoteHost = TunnelForegroundService.LOOPBACK_HOST
+                                tunnelRemotePort = ""
+                                tunnelLocalPort = embeddedSshPort.toString()
+                                tunnelDirection = TUNNEL_DIRECTION_REMOTE
+                                tunnelAutoStart = true
+                                tunnelStatusText = "选择要挂靠的服务器，填写服务器端口（如 2226）后点「保存预设」"
+                                currentScreen = "TUNNELS"
                             }
                         )
                     },
@@ -2333,16 +2357,17 @@ class MainActivity : FragmentActivity() {
                 )
             }
             "TUNNELS" -> {
-                val visibleTunnelPresets = tunnelPresets.filter { preset ->
-                    preset.workspaceId == tunnelConfig?.id
-                }
+                // Tunnels are organised per remote host IP: presets of every workspace on that host are shared.
+                val tunnelGroups = remember(configs) { tunnelHostGroups(configs) }
+                val selectedTunnelGroup = tunnelGroups.firstOrNull { group -> group.workspaces.any { it.id == tunnelConfig?.id } }
+                val visibleTunnelPresets = tunnelPresetsForHost(tunnelPresets, selectedTunnelGroup)
                 LaunchedEffect(configs, tunnelConfig?.id) {
                     if (configs.isNotEmpty()) {
                         val savedConfigId = settings
                             .getLong(KEY_TUNNEL_CONFIG_ID, -1L)
                             .takeIf { it > 0L }
                         val resolved = resolveTunnelConfig(
-                            configs = configs,
+                            configs = tunnelGroups.flatMap { it.workspaces },
                             currentConfigId = tunnelConfig?.id,
                             savedConfigId = savedConfigId
                         )
@@ -2369,7 +2394,11 @@ class MainActivity : FragmentActivity() {
                             } else {
                                 "正在连接：${latest.serverLabel}"
                             }
-                            TunnelStatus.RUNNING -> "隧道已启动：${latest.browserUrl}"
+                            TunnelStatus.RUNNING -> if (latest.remoteForward) {
+                                "反向隧道已启动：服务器 ${latest.remoteHost}:${latest.remotePort} → 手机 ${latest.localEndpoint}"
+                            } else {
+                                "隧道已启动：${latest.browserUrl}"
+                            }
                             TunnelStatus.FAILED -> "失败：${latest.statusText}"
                             TunnelStatus.STOPPED -> latest.statusText
                         }
@@ -2381,6 +2410,9 @@ class MainActivity : FragmentActivity() {
                     remoteHost = tunnelRemoteHost,
                     remotePort = tunnelRemotePort,
                     localPort = tunnelLocalPort,
+                    direction = tunnelDirection,
+                    autoStart = tunnelAutoStart,
+                    embeddedSshPort = embeddedSshPort.takeIf { embeddedSshEnabled },
                     presetName = tunnelPresetName,
                     presetNote = tunnelPresetNote,
                     selectedPresetId = selectedTunnelPresetId,
@@ -2407,6 +2439,8 @@ class MainActivity : FragmentActivity() {
                     onRemoteHostChange = { tunnelRemoteHost = it },
                     onRemotePortChange = { tunnelRemotePort = it },
                     onLocalPortChange = { tunnelLocalPort = it },
+                    onDirectionChange = { tunnelDirection = it },
+                    onAutoStartChange = { tunnelAutoStart = it },
                     onPresetNameChange = { tunnelPresetName = it },
                     onPresetNoteChange = { tunnelPresetNote = it },
                     onPresetSelected = { preset ->
@@ -2416,6 +2450,8 @@ class MainActivity : FragmentActivity() {
                         tunnelRemoteHost = preset.remoteHost
                         tunnelRemotePort = preset.remotePort.toString()
                         tunnelLocalPort = preset.localPort.takeIf { it > 0 }?.toString().orEmpty()
+                        tunnelDirection = normalizedTunnelDirection(preset.direction)
+                        tunnelAutoStart = preset.autoStart
                     },
                     onNewPreset = {
                         selectedTunnelPresetId = null
@@ -2424,28 +2460,36 @@ class MainActivity : FragmentActivity() {
                         tunnelRemoteHost = TunnelForegroundService.LOOPBACK_HOST
                         tunnelRemotePort = "3000"
                         tunnelLocalPort = ""
+                        tunnelDirection = TUNNEL_DIRECTION_LOCAL
+                        tunnelAutoStart = false
                         tunnelStatusText = "\u5DF2\u5207\u6362\u5230\u65B0\u5EFA\u96A7\u9053\u9884\u8BBE"
                     },
                     onSavePreset = {
                         val config = tunnelConfig
                         val remotePortValue = parseTunnelPort(tunnelRemotePort, allowAuto = false)
-                        val localPortValue = parseTunnelPort(tunnelLocalPort, allowAuto = true)
+                        val remoteForward = tunnelDirection == TUNNEL_DIRECTION_REMOTE
+                        val localPortValue = parseTunnelPort(tunnelLocalPort, allowAuto = !remoteForward)
                         when {
                             config == null -> tunnelStatusText = "失败：请先选择服务器"
                             remotePortValue == null -> tunnelStatusText = "失败：远端端口必须是 1-65535"
-                            localPortValue == null -> tunnelStatusText = "失败：手机端口必须为空或 1-65535"
+                            localPortValue == null -> tunnelStatusText = if (remoteForward) "失败：反向隧道需要填写手机目标端口 1-65535" else "失败：手机端口必须为空或 1-65535"
                             else -> {
                                 val remoteHost = tunnelRemoteHost.trim().ifBlank { TunnelForegroundService.LOOPBACK_HOST }
                                 val now = System.currentTimeMillis()
+                                // An existing preset stays with the workspace that owns it (other workspaces may use
+                                // it as their pre-connect tunnel); new ones go to the host's selected workspace.
+                                val ownerId = tunnelPresets.firstOrNull { it.id == selectedTunnelPresetId }?.workspaceId ?: config.id
                                 val preset = SshTunnelPreset(
                                     id = selectedTunnelPresetId ?: 0L,
-                                    workspaceId = config.id,
+                                    workspaceId = ownerId,
                                     name = tunnelPresetName.trim().ifBlank { tunnelPresetDefaultName(remoteHost, remotePortValue) },
                                     note = tunnelPresetNote.trim().takeIf { it.isNotEmpty() },
                                     remoteHost = remoteHost,
                                     remotePort = remotePortValue,
                                     localPort = localPortValue,
-                                    updateTime = now
+                                    updateTime = now,
+                                    direction = tunnelDirection,
+                                    autoStart = tunnelAutoStart
                                 )
                                 scope.launch {
                                     val dao = db.sshConfigDao()
@@ -2454,6 +2498,12 @@ class MainActivity : FragmentActivity() {
                                     tunnelPresetName = preset.name
                                     tunnelPresetNote = preset.note.orEmpty()
                                     tunnelStatusText = "已保存隧道预设：${preset.name}"
+                                    if (preset.autoStart) {
+                                        // A resident tunnel should be up right away, not only after the next boot.
+                                        requestNotificationPermissionIfNeeded()
+                                        TunnelForegroundService.startPreset(this@MainActivity, preset.copy(id = savedId), persistent = true)
+                                        tunnelStatusText = "已保存并启动常驻隧道：${preset.name}"
+                                    }
                                 }
                             }
                         }
@@ -2471,13 +2521,17 @@ class MainActivity : FragmentActivity() {
                         }
                     },
                     onStartTunnel = {
-                        val config = tunnelConfig
+                        // A preset runs over its own workspace's SSH login; ad-hoc forwards use the selected host's.
+                        val config = tunnelPresets.firstOrNull { it.id == selectedTunnelPresetId }
+                            ?.let { preset -> configs.firstOrNull { it.id == preset.workspaceId } }
+                            ?: tunnelConfig
                         val remotePortValue = parseTunnelPort(tunnelRemotePort, allowAuto = false)
-                        val localPortValue = parseTunnelPort(tunnelLocalPort, allowAuto = true)
+                        val remoteForward = tunnelDirection == TUNNEL_DIRECTION_REMOTE
+                        val localPortValue = parseTunnelPort(tunnelLocalPort, allowAuto = !remoteForward)
                         when {
                             config == null -> tunnelStatusText = "失败：请先选择服务器"
                             remotePortValue == null -> tunnelStatusText = "失败：远端端口必须是 1-65535"
-                            localPortValue == null -> tunnelStatusText = "失败：手机端口必须为空或 1-65535"
+                            localPortValue == null -> tunnelStatusText = if (remoteForward) "失败：反向隧道需要填写手机目标端口 1-65535" else "失败：手机端口必须为空或 1-65535"
                             else -> {
                                 runAfterSensitiveUnlock(biometricUnlockEnabled, "Start SSH tunnel") {
                                     requestNotificationPermissionIfNeeded()
@@ -2487,7 +2541,9 @@ class MainActivity : FragmentActivity() {
                                         configId = config.id,
                                         remoteHost = remoteHost,
                                         remotePort = remotePortValue,
-                                        localPort = localPortValue
+                                        localPort = localPortValue,
+                                        remoteForward = remoteForward,
+                                        persistent = tunnelAutoStart
                                     )
                                     tunnelStatusText = "正在启动隧道：$remoteHost:$remotePortValue"
                                 }
@@ -3449,7 +3505,9 @@ class MainActivity : FragmentActivity() {
                 remoteHost = remoteHost,
                 remotePort = remotePort,
                 localPort = localPort,
-                updateTime = System.currentTimeMillis()
+                updateTime = System.currentTimeMillis(),
+                direction = normalizedTunnelDirection(record.direction),
+                autoStart = record.autoStart
             )
             if (existing == null) {
                 dao.insertTunnelPreset(preset)
@@ -3492,7 +3550,9 @@ class MainActivity : FragmentActivity() {
             note = note,
             remoteHost = remoteHost,
             remotePort = remotePort,
-            localPort = localPort
+            localPort = localPort,
+            direction = direction,
+            autoStart = autoStart
         )
     }
 
@@ -3684,9 +3744,16 @@ class MainActivity : FragmentActivity() {
             unbindService(serviceConnection)
             isBound = false
         }
-        AgentBridgeService.stop()
+        // While tunnels run (e.g. a resident reverse tunnel to the built-in SSH server) the tunnel foreground service
+        // keeps the process alive, and remote agents still need the SSH server and the Agent Bridge behind it.
+        val tunnelsActive = TunnelForegroundService.tunnelStates.value.any {
+            it.status == TunnelStatus.RUNNING || it.status == TunnelStatus.CONNECTING
+        }
+        if (!tunnelsActive) {
+            AgentBridgeService.stop()
+        }
         // Keep remote SSH sessions alive across rotation; the recreated activity re-requests the same port (a no-op).
-        if (!isChangingConfigurations) {
+        if (!isChangingConfigurations && !tunnelsActive) {
             EmbeddedSshServer.stop()
         }
         super.onDestroy()
