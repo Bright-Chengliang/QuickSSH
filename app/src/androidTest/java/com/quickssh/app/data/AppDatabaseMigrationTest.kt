@@ -88,6 +88,39 @@ class AppDatabaseMigrationTest {
         }
     }
 
+    @Test
+    fun migratesToVersionFourteenCreatingTunnelHostRemarksTable() = runBlocking {
+        createLegacyVersionOneDatabase()
+
+        val database = openMigratedDatabase()
+        try {
+            val dao = database.sshConfigDao()
+            assertEquals(0, dao.getAllTunnelHostRemarks().size)
+            dao.saveTunnelHostRemark("10.0.0.5", " 家里 NAS ")
+
+            assertEquals("家里 NAS", dao.getAllTunnelHostRemarks().single().remark)
+            assertEquals("家里 NAS", dao.getTunnelHostRemark("10.0.0.5")?.remark)
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test
+    fun blankTunnelHostRemarkDeletesTheStoredName() = runBlocking {
+        createLegacyVersionOneDatabase()
+
+        val database = openMigratedDatabase()
+        try {
+            val dao = database.sshConfigDao()
+            dao.saveTunnelHostRemark("10.0.0.5", "家里 NAS")
+            dao.saveTunnelHostRemark("10.0.0.5", "   ")
+
+            assertEquals(0, dao.getAllTunnelHostRemarks().size)
+        } finally {
+            database.close()
+        }
+    }
+
     private fun openMigratedDatabase(): AppDatabase {
         return Room.databaseBuilder(context, AppDatabase::class.java, TEST_DB)
             .addMigrations(*AppDatabase.migrations())

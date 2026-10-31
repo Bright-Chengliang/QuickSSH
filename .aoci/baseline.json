@@ -1,7 +1,7 @@
 {
   "version": 1,
   "created_at": "2026-10-02T21:23:42Z",
-  "updated_at": "2026-10-17T03:54:34Z",
+  "updated_at": "2026-10-31T16:42:42Z",
   "files": {
     ".gitattributes": {
       "role": "index",
@@ -53,9 +53,9 @@
     },
     "aoci.code.txt": {
       "role": "index",
-      "sha256": "ecb28f3d7b00fe226060ef95d973dd10dd61eb1db5b5cb9aeabb823fa7b30d92",
-      "size": 54994,
-      "normalized_sha256": "ecb28f3d7b00fe226060ef95d973dd10dd61eb1db5b5cb9aeabb823fa7b30d92"
+      "sha256": "f25645394cd12cec3d2e485475f8535cd26dd34835a6184a240a2d627465e7e6",
+      "size": 56928,
+      "normalized_sha256": "f25645394cd12cec3d2e485475f8535cd26dd34835a6184a240a2d627465e7e6"
     },
     "aoci.meta.txt": {
       "role": "index",
@@ -71,15 +71,15 @@
     },
     "app/build.gradle.kts": {
       "role": "index",
-      "sha256": "da306f80c6342a154214491601d1271000002a586895050ac163d0d1cba3eece",
+      "sha256": "65b2bb231e5d02382f297f778943cae3afe7aeacde077be02a6156cc5aaa08a6",
       "size": 3091,
-      "normalized_sha256": "da306f80c6342a154214491601d1271000002a586895050ac163d0d1cba3eece"
+      "normalized_sha256": "65b2bb231e5d02382f297f778943cae3afe7aeacde077be02a6156cc5aaa08a6"
     },
     "app/src/androidTest/java/com/quickssh/app/data/AppDatabaseMigrationTest.kt": {
       "role": "index",
-      "sha256": "6d4f5b40fec82f73b5c4f9638ffa65c6166ae374c773ba701ffb5669872f563b",
-      "size": 6713,
-      "normalized_sha256": "6d4f5b40fec82f73b5c4f9638ffa65c6166ae374c773ba701ffb5669872f563b"
+      "sha256": "76fcbbdfa007cfbfdb378ca9ec49c52c4ea792d860e6abc8c46416aac141c0d6",
+      "size": 7795,
+      "normalized_sha256": "76fcbbdfa007cfbfdb378ca9ec49c52c4ea792d860e6abc8c46416aac141c0d6"
     },
     "app/src/androidTest/java/com/quickssh/app/data/SshConfigBackupCodecTest.kt": {
       "role": "index",
@@ -131,21 +131,21 @@
     },
     "app/src/main/java/com/quickssh/app/MainActivity.kt": {
       "role": "index",
-      "sha256": "a003916397b450ce11409444d88dc0df17e58080d2a7480d2e4d0173fe9b8091",
-      "size": 187251,
-      "normalized_sha256": "a003916397b450ce11409444d88dc0df17e58080d2a7480d2e4d0173fe9b8091"
+      "sha256": "fe43cc007d289072acd9b3ade213f97f2ff6f14f6c47687d3923d4937ffca297",
+      "size": 191223,
+      "normalized_sha256": "fe43cc007d289072acd9b3ade213f97f2ff6f14f6c47687d3923d4937ffca297"
     },
     "app/src/main/java/com/quickssh/app/data/AppDatabase.kt": {
       "role": "index",
-      "sha256": "9ee420a41ad8422b414977d5f284bc7cf3d7ca70c0cdb0ea7f19f772a8102099",
-      "size": 27092,
-      "normalized_sha256": "9ee420a41ad8422b414977d5f284bc7cf3d7ca70c0cdb0ea7f19f772a8102099"
+      "sha256": "4eefca13b1061f33a24f0f9c18b6ef63f41dad377d37b4c00fa732522d2f6f0d",
+      "size": 27776,
+      "normalized_sha256": "4eefca13b1061f33a24f0f9c18b6ef63f41dad377d37b4c00fa732522d2f6f0d"
     },
     "app/src/main/java/com/quickssh/app/data/SshConfig.kt": {
       "role": "index",
-      "sha256": "ab44422b70406896fc92e6160e5c57a0674ea658386f4810a3b274412b20ad4d",
-      "size": 5241,
-      "normalized_sha256": "ab44422b70406896fc92e6160e5c57a0674ea658386f4810a3b274412b20ad4d"
+      "sha256": "87054880c72184b5bb0fc47cd9ed9690815ec6a9755cf3fa3e6eed85930f1dd1",
+      "size": 5710,
+      "normalized_sha256": "87054880c72184b5bb0fc47cd9ed9690815ec6a9755cf3fa3e6eed85930f1dd1"
     },
     "app/src/main/java/com/quickssh/app/data/SshConfigBackup.kt": {
       "role": "index",
@@ -161,15 +161,15 @@
     },
     "app/src/main/java/com/quickssh/app/data/SshConfigDao.kt": {
       "role": "index",
-      "sha256": "a953ccd282eef675814d3decc11276fd72aa36289287951fa51308bd803dfb8c",
-      "size": 16284,
-      "normalized_sha256": "a953ccd282eef675814d3decc11276fd72aa36289287951fa51308bd803dfb8c"
+      "sha256": "204e6f748dc70dde98091930fb95fd3266c38749fe7289bbb9f707d6453a322f",
+      "size": 17456,
+      "normalized_sha256": "204e6f748dc70dde98091930fb95fd3266c38749fe7289bbb9f707d6453a322f"
     },
     "app/src/main/java/com/quickssh/app/data/SshConfigHierarchy.kt": {
       "role": "index",
-      "sha256": "9db623b031607dd298ffc77b31c229f9f4c685eac4a128dc5ba1f897197b5523",
-      "size": 6191,
-      "normalized_sha256": "9db623b031607dd298ffc77b31c229f9f4c685eac4a128dc5ba1f897197b5523"
+      "sha256": "796b103b20263e6f8f70b688f46f43b62628144eb09c3cd4678a926fbc51e170",
+      "size": 7640,
+      "normalized_sha256": "796b103b20263e6f8f70b688f46f43b62628144eb09c3cd4678a926fbc51e170"
     },
     "app/src/main/java/com/quickssh/app/data/TransferHistoryDao.kt": {
       "role": "index",
@@ -269,9 +269,9 @@
     },
     "app/src/main/java/com/quickssh/app/service/SshClientHelper.kt": {
       "role": "index",
-      "sha256": "6d3cb342475bb49dc8c0cfb2b5105aa43d61d005d6c6fac3477721578d509abd",
-      "size": 46656,
-      "normalized_sha256": "6d3cb342475bb49dc8c0cfb2b5105aa43d61d005d6c6fac3477721578d509abd"
+      "sha256": "4d7c4fb6533dc32a5443cade10d365b3e3652dc6474690abaf87dd819acf7879",
+      "size": 48509,
+      "normalized_sha256": "4d7c4fb6533dc32a5443cade10d365b3e3652dc6474690abaf87dd819acf7879"
     },
     "app/src/main/java/com/quickssh/app/service/SshForegroundService.kt": {
       "role": "index",
@@ -395,15 +395,15 @@
     },
     "app/src/main/java/com/quickssh/app/ui/screens/TerminalScreen.kt": {
       "role": "index",
-      "sha256": "ff47578b8ffdae1b4c0d1f7d26d77f90fb7c6f61e4361ee46b452f429c0446b4",
-      "size": 43036,
-      "normalized_sha256": "018902eea18c25d419b7a78c7b8d4113288d807219645c0242bc2beed96cfd37"
+      "sha256": "88b244237bd3ee197474416c2b772eb6937beffcdd58ef26c97c1d2469d988df",
+      "size": 43247,
+      "normalized_sha256": "6b0c7bde39eb5c343d528f1e7720bdba46c9995ab4f5d31b606f8d43a498911e"
     },
     "app/src/main/java/com/quickssh/app/ui/screens/TermuxTerminalView.kt": {
       "role": "index",
-      "sha256": "11c544b036acb40121bfdd044762bf47543cb07a21cc0a8e01496cad9c166246",
-      "size": 13641,
-      "normalized_sha256": "11c544b036acb40121bfdd044762bf47543cb07a21cc0a8e01496cad9c166246"
+      "sha256": "21f92cb0cdb56ec69de4b105b4b909a5b10826b15e1928133635c949a1f6d00d",
+      "size": 17230,
+      "normalized_sha256": "21f92cb0cdb56ec69de4b105b4b909a5b10826b15e1928133635c949a1f6d00d"
     },
     "app/src/main/java/com/quickssh/app/ui/screens/TransferScreen.kt": {
       "role": "index",
@@ -413,9 +413,9 @@
     },
     "app/src/main/java/com/quickssh/app/ui/screens/TunnelScreen.kt": {
       "role": "index",
-      "sha256": "70fa60b45aa78db07b18397c6be7549398985c70826c744063f474a5018b613c",
-      "size": 38761,
-      "normalized_sha256": "70fa60b45aa78db07b18397c6be7549398985c70826c744063f474a5018b613c"
+      "sha256": "4eb68c8bb6ebe4409912cec739ee8f3aa1a52644a312b100e04ad0d25b2b0884",
+      "size": 42621,
+      "normalized_sha256": "4eb68c8bb6ebe4409912cec739ee8f3aa1a52644a312b100e04ad0d25b2b0884"
     },
     "app/src/main/java/com/quickssh/app/ui/screens/UiLanguage.kt": {
       "role": "index",
@@ -467,9 +467,9 @@
     },
     "app/src/main/java/com/quickssh/app/utils/TerminalBuffer.kt": {
       "role": "index",
-      "sha256": "29ead9efca8c1abcee44ea9a935707ea44715f588b8521f14f6d847bd5ce666a",
-      "size": 63598,
-      "normalized_sha256": "29ead9efca8c1abcee44ea9a935707ea44715f588b8521f14f6d847bd5ce666a"
+      "sha256": "b7f7b11d69d755cd4094f6ebca81148d34e630d2c01761ea014b5a4964715ed0",
+      "size": 64057,
+      "normalized_sha256": "b7f7b11d69d755cd4094f6ebca81148d34e630d2c01761ea014b5a4964715ed0"
     },
     "app/src/main/java/com/termux/terminal/QuickSshPty.kt": {
       "role": "index",
@@ -594,9 +594,9 @@
     },
     "app/src/test/java/com/quickssh/app/data/SshConfigHierarchyTest.kt": {
       "role": "index",
-      "sha256": "6bc58082b154ee7501e075b0205080e120cd37b9fae5ea598f86f79de33c06ed",
-      "size": 8272,
-      "normalized_sha256": "6bc58082b154ee7501e075b0205080e120cd37b9fae5ea598f86f79de33c06ed"
+      "sha256": "1c0aa21d39118dedace3aedc1cd8e261c732f0d63e9e836d1cc00e190b10c2e8",
+      "size": 11037,
+      "normalized_sha256": "1c0aa21d39118dedace3aedc1cd8e261c732f0d63e9e836d1cc00e190b10c2e8"
     },
     "app/src/test/java/com/quickssh/app/service/AgentBridgeServiceTest.kt": {
       "role": "index",
@@ -654,9 +654,9 @@
     },
     "app/src/test/java/com/quickssh/app/service/SshClientHelperTest.kt": {
       "role": "index",
-      "sha256": "cb2c22c52be277c95be17e43e2136aa4f7989603516092c0a64f18812bc88230",
-      "size": 8574,
-      "normalized_sha256": "40e7167cd911a46d05a3159d1b6dd0ab96123f83b95ee387983548e72274b525"
+      "sha256": "051b4067c632a34e02803c2abd7985413334ff3172303835780a7c375055a12f",
+      "size": 10327,
+      "normalized_sha256": "051b4067c632a34e02803c2abd7985413334ff3172303835780a7c375055a12f"
     },
     "app/src/test/java/com/quickssh/app/service/SshForegroundServiceTest.kt": {
       "role": "index",
@@ -718,6 +718,18 @@
       "size": 2501,
       "normalized_sha256": "5713da413502374eb0a904909e90b650109205fdf30d98d2bd1d496a24e31fc4"
     },
+    "app/src/test/java/com/quickssh/app/ui/screens/TerminalScrollBatchingTest.kt": {
+      "role": "index",
+      "sha256": "c429fec90eae9d68b049cacbc54f5fe0046fbb48a11642d5f4ae2c44f4136837",
+      "size": 1769,
+      "normalized_sha256": "c429fec90eae9d68b049cacbc54f5fe0046fbb48a11642d5f4ae2c44f4136837"
+    },
+    "app/src/test/java/com/quickssh/app/ui/screens/TermuxScrollFallbackTest.kt": {
+      "role": "index",
+      "sha256": "845486f3e752c9a5d3c7de1ef8e9c086b8c75de6f264b1615d3ca40201da15cf",
+      "size": 2139,
+      "normalized_sha256": "845486f3e752c9a5d3c7de1ef8e9c086b8c75de6f264b1615d3ca40201da15cf"
+    },
     "app/src/test/java/com/quickssh/app/ui/screens/TransferScreenTest.kt": {
       "role": "index",
       "sha256": "c593badc3a0604b72ffcb19b82f4887035520e0b12912514c71c18bbabb45eb3",
@@ -726,9 +738,9 @@
     },
     "app/src/test/java/com/quickssh/app/ui/screens/TunnelScreenTest.kt": {
       "role": "index",
-      "sha256": "9689be5577aab94d741fc6ba387463bc7e755b8a182b3db65bbbff2bf9453f13",
-      "size": 1227,
-      "normalized_sha256": "9689be5577aab94d741fc6ba387463bc7e755b8a182b3db65bbbff2bf9453f13"
+      "sha256": "9dae6d421084dc77d00c7053e1603884989a89c945f6e84ac248bd72632170b2",
+      "size": 2720,
+      "normalized_sha256": "9dae6d421084dc77d00c7053e1603884989a89c945f6e84ac248bd72632170b2"
     },
     "app/src/test/java/com/quickssh/app/utils/AnsiRendererTest.kt": {
       "role": "index",

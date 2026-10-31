@@ -192,7 +192,8 @@ class TerminalBuffer(
         historyChunkUnsafe = pendingEscape.isNotEmpty() || containsHistoryUnsafeControl(raw)
         if (!historyChunkUnsafe) historySuppressed = false
 
-        var text = pendingEscape + raw
+        // Avoid a string concat allocation for the common case of no carried-over escape fragment.
+        var text = if (pendingEscape.isEmpty()) raw else pendingEscape + raw
         pendingEscape = ""
 
         val incompleteEscapeStart = findIncompleteEscapeStart(text)
@@ -209,7 +210,7 @@ class TerminalBuffer(
                 ESC -> {
                     val consumed = consumeEscape(text, i)
                     val sequence = text.substring(i, (i + consumed).coerceAtMost(text.length))
-                    if (sequence.matches(Regex("\\u001B\\[[0-9;:]*m"))) {
+                    if (SGR_SEQUENCE.matches(sequence)) {
                         recordHistoryText(sequence)
                     }
                     i += consumed
@@ -234,7 +235,7 @@ class TerminalBuffer(
                 CSI_C1 -> {
                     val consumed = consumeCsi(text, i, c1 = true)
                     val sequence = text.substring(i, (i + consumed).coerceAtMost(text.length))
-                    if (sequence.matches(Regex("\\u009B[0-9;:]*m"))) {
+                    if (SGR_C1_SEQUENCE.matches(sequence)) {
                         recordHistoryText(sequence)
                     }
                     i += consumed
@@ -1602,6 +1603,13 @@ class TerminalBuffer(
         const val MAX_COLUMNS = 240
         const val MIN_ROWS = 6
         const val MAX_ROWS = 120
+
+        /**
+         * SGR checks run for every escape sequence in the output stream, and terminal output is mostly
+         * colour codes, so these patterns must be compiled once instead of per sequence.
+         */
+        private val SGR_SEQUENCE = Regex("\\u001B\\[[0-9;:]*m")
+        private val SGR_C1_SEQUENCE = Regex("\\u009B[0-9;:]*m")
 
         private const val TAB_WIDTH = 8
         private const val ESC = 0x1B

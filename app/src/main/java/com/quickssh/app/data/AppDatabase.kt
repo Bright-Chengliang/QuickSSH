@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [SshServerNode::class, SshWorkspaceProfile::class, SshTunnelPreset::class, TransferHistoryEntry::class, SshFolder::class], version = 13, exportSchema = false)
+@Database(entities = [SshServerNode::class, SshWorkspaceProfile::class, SshTunnelPreset::class, TransferHistoryEntry::class, SshFolder::class, SshTunnelHostRemark::class], version = 14, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun sshConfigDao(): SshConfigDao
     abstract fun transferHistoryDao(): TransferHistoryDao
@@ -89,6 +89,12 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                createTunnelHostRemarksTable(db)
+            }
+        }
+
         internal fun migrations(): Array<Migration> {
             return arrayOf(
                 MIGRATION_1_2,
@@ -102,7 +108,8 @@ abstract class AppDatabase : RoomDatabase() {
                 MIGRATION_9_10,
                 MIGRATION_10_11,
                 MIGRATION_11_12,
-                MIGRATION_12_13
+                MIGRATION_12_13,
+                MIGRATION_13_14
             )
         }
 
@@ -344,6 +351,18 @@ abstract class AppDatabase : RoomDatabase() {
                     id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
                     name TEXT NOT NULL,
                     sortOrder INTEGER NOT NULL DEFAULT 0,
+                    updateTime INTEGER NOT NULL
+                )
+                """.trimIndent()
+            )
+        }
+
+        private fun createTunnelHostRemarksTable(database: SupportSQLiteDatabase) {
+            database.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS tunnel_host_remarks (
+                    hostKey TEXT NOT NULL PRIMARY KEY,
+                    remark TEXT NOT NULL,
                     updateTime INTEGER NOT NULL
                 )
                 """.trimIndent()

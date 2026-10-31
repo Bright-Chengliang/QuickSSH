@@ -14,6 +14,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.quickssh.app.utils.TerminalBuffer
 import com.termux.terminal.TerminalSession
 import com.termux.terminal.TerminalSessionClient
+import com.termux.view.TerminalRenderer
 import com.termux.view.TerminalView
 import com.termux.view.TerminalViewClient
 
@@ -37,8 +38,6 @@ fun TermuxTerminalComponent(
     val currentOnAltConsumed by rememberUpdatedState(onAltKeyConsumed)
     val currentOnSingleTap by rememberUpdatedState(onSingleTap)
     val currentOnTerminalResize by rememberUpdatedState(onTerminalResize)
-
-    var terminalViewInstance by remember { mutableStateOf<TerminalView?>(null) }
 
     val fontSizePx = with(density) { fontSizeSp.coerceIn(8, 32).sp.toPx() }.toInt()
 
@@ -100,25 +99,19 @@ fun TermuxTerminalComponent(
                 isFocusableInTouchMode = true
                 requestFocus()
 
-                setTextSize(fontSizePx)
-                setTypeface(Typeface.MONOSPACE)
-                setTerminalCursorBlinkerRate(500)
-                setTerminalCursorBlinkerState(true, true)
-
-                setOnClickListener {
-                    requestFocus()
-                    val imm = ctx.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-                    imm?.showSoftInput(this@apply, InputMethodManager.SHOW_IMPLICIT)
-                }
+                // The terminal owns vertical drags on its own (doScroll + fling). The touch listener below
+                // only steps in when that path cannot move anything, so a swipe never scrolls twice.
+                isVerticalScrollBarEnabled = false
+                overScrollMode = android.view.View.OVER_SCROLL_NEVER
 
                 var lastTouchY = 0f
                 var accumulatedScrollDelta = 0f
                 val scrollStepPx = 48f * ctx.resources.displayMetrics.density
+                val scrollPager = TerminalScrollPager()
 
                 setOnTouchListener { v, event ->
                     val termView = v as? TerminalView
                     val em = termView?.mEmulator
-                    val activeSession = termView?.currentSession ?: session
                     when (event.actionMasked) {
                         MotionEvent.ACTION_DOWN -> {
                             lastTouchY = event.y
@@ -129,20 +122,21 @@ fun TermuxTerminalComponent(
                             val dy = currentY - lastTouchY
                             lastTouchY = currentY
 
-                            val mouseTracking = em?.isMouseTrackingActive == true
-
-                            // If mouse tracking is inactive (e.g. Windows ConPTY swallowed it or TUI without mouse mode),
-                            // dispatch PgUp / PgDn on vertical swipe to scroll the TUI viewport.
-                            if (!mouseTracking && activeSession != null) {
+                            // Termux scrolls its own transcript when real transcript rows exist. Windows
+                            // ConPTY sessions keep them at zero, so a drag would be swallowed: only then
+                            // translate the swipe into PgUp/PgDn.
+                            if (termView != null && termuxNativeScrollIsIneffective(em)) {
+                                var queuedPages = 0
                                 accumulatedScrollDelta += dy
                                 while (accumulatedScrollDelta >= scrollStepPx) {
-                                    activeSession.write("\u001B[5~") // PgUp: drag down -> scroll up
+                                    queuedPages++ // drag down -> scroll up
                                     accumulatedScrollDelta -= scrollStepPx
                                 }
                                 while (accumulatedScrollDelta <= -scrollStepPx) {
-                                    activeSession.write("\u001B[6~") // PgDn: drag up -> scroll down
+                                    queuedPages-- // drag up -> scroll down
                                     accumulatedScrollDelta += scrollStepPx
                                 }
+                                scrollPager.queue(queuedPages, termView)
                             }
                         }
                         MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
@@ -150,6 +144,18 @@ fun TermuxTerminalComponent(
                         }
                     }
                     false
+                }
+
+                setTextSize(fontSizePx)
+                setTypeface(Typeface.MONOSPACE)
+                rememberTextSize(fontSizePx)
+                setTerminalCursorBlinkerRate(500)
+                setTerminalCursorBlinkerState(true, true)
+
+                setOnClickListener {
+                    requestFocus()
+                    val imm = ctx.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+                    imm?.showSoftInput(this@apply, InputMethodManager.SHOW_IMPLICIT)
                 }
 
                 addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
@@ -170,21 +176,12 @@ fun TermuxTerminalComponent(
                 if (session != null) {
                     bindSessionToView(this, session, currentOnTerminalResize)
                 }
-
-                terminalViewInstance = this
             }
         },
         update = { view ->
-            val currentTextSize = try {
-                val rendererField = TerminalView::class.java.getDeclaredField("mRenderer").apply { isAccessible = true }
-                val renderer = rendererField.get(view)
-                val textSizeField = renderer.javaClass.getDeclaredField("mTextSize").apply { isAccessible = true }
-                textSizeField.getInt(renderer)
-            } catch (_: Exception) {
-                -1
-            }
-            if (currentTextSize != fontSizePx) {
+            if (view.rendererTextSize() != fontSizePx) {
                 view.setTextSize(fontSizePx)
+                view.rememberTextSize(fontSizePx)
                 view.post {
                     val activeSession = view.currentSession ?: session
                     if (activeSession != null) {
@@ -202,6 +199,103 @@ fun TermuxTerminalComponent(
         }
     )
 }
+
+/**
+ * Renderer text size in px. TerminalView does not expose it, and every `setTextSize` rebuilds the
+ * renderer and re-sizes the PTY, so it is remembered on the view instead of reflecting into it.
+ */
+private fun TerminalView.rendererTextSize(): Int = (tag as? Int) ?: -1
+
+private fun TerminalView.rememberTextSize(textSizePx: Int) {
+    tag = textSizePx
+}
+
+/**
+ * True when a vertical drag cannot scroll the terminal on its own. Termux moves its own transcript only
+ * when mouse tracking is off, the alternate buffer is off, and real transcript rows exist; a Windows
+ * ConPTY session reports all three that way, so only then the swipe becomes PgUp/PgDn.
+ */
+internal fun termuxNativeScrollIsIneffective(
+    mouseTrackingActive: Boolean?,
+    alternateBufferActive: Boolean?,
+    activeTranscriptRows: Int?
+): Boolean {
+    if (mouseTrackingActive == null || alternateBufferActive == null || activeTranscriptRows == null) {
+        return false
+    }
+    if (mouseTrackingActive) return false
+    if (alternateBufferActive) return false
+    return activeTranscriptRows <= 0
+}
+
+private fun termuxNativeScrollIsIneffective(emulator: com.termux.terminal.TerminalEmulator?): Boolean {
+    if (emulator == null) return false
+    return runCatching {
+        termuxNativeScrollIsIneffective(
+            mouseTrackingActive = emulator.isMouseTrackingActive,
+            alternateBufferActive = emulator.isAlternateBufferActive,
+            activeTranscriptRows = emulator.screen.activeTranscriptRows
+        )
+    }.getOrDefault(false)
+}
+
+
+private val scrollWriteExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
+    Thread(runnable, "quickssh-terminal-scroll").apply { isDaemon = true }
+}
+
+/**
+ * Coalesced PgUp/PgDn writer. Writing to the SSH stream can block on a slow link, so it never runs on the
+ * UI thread. Pages are batched per flush window instead of one write per page: this fallback scroll is a
+ * request/response exchange with the remote, so on a real network every single page costs a round trip and
+ * a fast drag would stutter, while one write carrying N repeats costs the same single round trip.
+ */
+private class TerminalScrollPager {
+    private val pendingPages = java.util.concurrent.atomic.AtomicInteger(0)
+    private val writePending = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    fun queue(pages: Int, view: TerminalView) {
+        if (pages == 0) return
+        pendingPages.addAndGet(pages)
+        arm(view)
+    }
+
+    private fun arm(view: TerminalView) {
+        if (!writePending.compareAndSet(false, true)) return
+        view.postDelayed({ flush(view) }, SCROLL_FLUSH_DELAY_MS)
+    }
+
+    private fun flush(view: TerminalView) {
+        scrollWriteExecutor.execute {
+            try {
+                while (true) {
+                    val queued = pendingPages.getAndSet(0)
+                    if (queued != 0) {
+                        val session = view.currentSession ?: break
+                        val pageSequence = if (queued > 0) "\u001B[5~" else "\u001B[6~"
+                        runCatching { session.write(pageSequence.repeat(kotlin.math.abs(queued))) }
+                        continue
+                    }
+                    // Release the slot, then re-check: a page queued between the empty read and this
+                    // release must not be stranded until the next drag event.
+                    writePending.set(false)
+                    if (pendingPages.get() == 0) break
+                    if (!writePending.compareAndSet(false, true)) break
+                }
+            } finally {
+                writePending.set(false)
+            }
+        }
+    }
+
+    private companion object {
+        /** One frame plus a little slack: enough to accumulate a whole drag step into one write. */
+        const val SCROLL_FLUSH_DELAY_MS = 32L
+    }
+}
+
+
+
 
 private class TermuxViewClientDelegate(
     val baseClient: TerminalSessionClient?,
@@ -271,12 +365,10 @@ private class TermuxViewClientDelegate(
 private fun getEmulatorDimensions(session: TerminalSession): Pair<Int, Int>? {
     return try {
         val em = session.emulator ?: return null
-        val colsField = em.javaClass.getDeclaredField("mColumns").apply { isAccessible = true }
-        val rowsField = em.javaClass.getDeclaredField("mRows").apply { isAccessible = true }
-        val cols = colsField.getInt(em)
-        val rows = rowsField.getInt(em)
+        val cols = em.mColumns
+        val rows = em.mRows
         if (cols > 0 && rows > 0) Pair(cols, rows) else null
-    } catch (_: Exception) {
+    } catch (_: Throwable) {
         null
     }
 }
@@ -286,7 +378,7 @@ private fun bindSessionToView(
     session: TerminalSession,
     onTerminalResize: ((TerminalBuffer.Size) -> Unit)? = null
 ) {
-    if (view.currentSession != session) {
+    if (view.currentSession !== session) {
         view.attachSession(session)
         view.post {
             getEmulatorDimensions(session)?.let { (cols, rows) ->

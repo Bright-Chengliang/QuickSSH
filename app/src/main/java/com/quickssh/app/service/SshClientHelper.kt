@@ -60,6 +60,7 @@ class SshClientHelper(
         private const val RECENT_OUTPUT_REPLAY_MAX_CHUNKS = 32768
         private const val RECENT_OUTPUT_REPLAY_MAX_CHARS = 16 * 1024 * 1024
         private const val CODEX_PREVIEW_EXEC_TIMEOUT_SECONDS = 45L
+        private const val SHELL_EXIT_CLASSIFY_WINDOW_MS = 1_500L
 
         init {
             setupBouncyCastle()
@@ -89,9 +90,6 @@ class SshClientHelper(
 
     @Volatile
     private var userRequestedDisconnect = false
-
-    @Volatile
-    private var userTriggeredShellExit = false
 
     @Volatile
     private var reconnectAttempt = 0
@@ -188,7 +186,6 @@ class SshClientHelper(
                 outputStream = shell?.outputStream
                 isConnected = true
                 reconnectAttempt = 0
-                userTriggeredShellExit = false
                 updateStatus(SshSessionStatus.CONNECTED, "Connected to ${config.host}:${config.port}")
 
                 val activeShell = shell
@@ -205,16 +202,7 @@ class SshClientHelper(
                         },
                         onSessionFinished = {
                             scope.launch(Dispatchers.IO) {
-                                if (userRequestedDisconnect) return@launch
-                                if (userTriggeredShellExit) {
-                                    userRequestedDisconnect = true
-                                    emitLog("\n[QuickSSH] Shell session exited.")
-                                    closeCurrentConnection()
-                                    updateStatus(SshSessionStatus.DISCONNECTED, "Disconnected")
-                                } else {
-                                    emitLog("\n[QuickSSH Info] Remote connection lost, scheduling auto-reconnect...")
-                                    scheduleReconnect(java.io.IOException("Remote terminal connection stream ended"))
-                                }
+                                handleShellStreamEnded(activeShell)
                             }
                         }
                     )
@@ -222,10 +210,8 @@ class SshClientHelper(
                     _termuxSessionState.value = bridge?.session
 
                     if (bridge == null) {
-                        launchReaderRoutine(shell?.inputStream)
+                        launchReaderRoutine(activeShell)
                     }
-                } else {
-                    launchReaderRoutine(shell?.inputStream)
                 }
                 delay(SHELL_STARTUP_COMMAND_DELAY_MS)
 
@@ -427,15 +413,18 @@ class SshClientHelper(
         }
     }
 
-    private fun launchReaderRoutine(inputStream: InputStream?) {
-        if (inputStream == null) return
+    private fun launchReaderRoutine(activeShell: Session.Shell) {
+        val inputStream = activeShell.inputStream
         scope.launch(Dispatchers.IO) {
             val buffer = ByteArray(1024)
             val outputDecoder = TerminalOutputDecoder()
             try {
                 while (isConnected && !userRequestedDisconnect) {
                     val readSize = inputStream.read(buffer)
-                    if (readSize == -1) throw IllegalStateException("remote stream closed")
+                    if (readSize == -1) {
+                        handleShellStreamEnded(activeShell)
+                        return@launch
+                    }
                     val decoded = outputDecoder.decode(buffer, readSize)
                     if (decoded.isNotEmpty()) {
                         lastRemoteOutputAtMillis = System.currentTimeMillis()
@@ -454,12 +443,6 @@ class SshClientHelper(
     }
 
     override fun sendLine(line: String) {
-        val trimmed = line.trim()
-        if (trimmed == "exit" || trimmed == "logout") {
-            userTriggeredShellExit = true
-        } else if (trimmed.isNotBlank()) {
-            userTriggeredShellExit = false
-        }
         _termuxSessionState.value?.write(terminalLinePayload(line)) ?: sendCommand(terminalLinePayload(line))
     }
 
@@ -551,9 +534,6 @@ class SshClientHelper(
 
     override fun sendRawInput(data: String) {
         if (data.isEmpty()) return
-        if (data == "exit\r" || data == "exit\n" || data == "logout\r" || data == "logout\n") {
-            userTriggeredShellExit = true
-        }
         _termuxSessionState.value?.let {
             it.write(data)
             return
@@ -602,6 +582,43 @@ class SshClientHelper(
         emitLog("\n[QuickSSH] Session retained. Reconnect attempt $reconnectAttempt in ${delayMillis / 1000}s.")
         delay(delayMillis)
         if (shouldReconnectAfterDelay(userRequestedDisconnect, isConnected)) connectOnce()
+    }
+
+    /**
+     * The shell's output stream reached its end. That happens both when the network drops and
+     * when the remote shell itself exits (`exit`, Ctrl+D, or a TUI that takes the shell down with
+     * it). Only a dead transport is a lost connection: reconnecting after a clean exit replays the
+     * post-connect commands, so e.g. `opencode --yolo` would restart every time the user quits it.
+     */
+    private suspend fun handleShellStreamEnded(endedShell: Session.Shell) {
+        if (userRequestedDisconnect || endedShell !== shell) return
+        val client = sshClient
+        val command = endedShell as? Session.Command
+        val deadline = System.currentTimeMillis() + SHELL_EXIT_CLASSIFY_WINDOW_MS
+        var outcome: ShellStreamEndOutcome
+        while (true) {
+            val timedOut = System.currentTimeMillis() >= deadline
+            outcome = classifyShellStreamEnd(
+                exitStatus = command?.exitStatus,
+                exitSignal = command?.exitSignal?.name,
+                transportConnected = client?.isConnected == true,
+                timedOut = timedOut
+            )
+            if (outcome != ShellStreamEndOutcome.UNDECIDED || timedOut) break
+            delay(50L)
+        }
+        if (userRequestedDisconnect || endedShell !== shell) return
+        if (outcome == ShellStreamEndOutcome.REMOTE_EXIT) {
+            val detail = command?.exitStatus?.let { " (exit status $it)" }
+                ?: command?.exitSignal?.let { " (signal $it)" }
+                ?: ""
+            emitLog("\n[QuickSSH] Remote shell exited$detail. Reconnect manually to start a new shell.")
+            closeCurrentConnection()
+            updateStatus(SshSessionStatus.DISCONNECTED, "Remote shell exited$detail")
+        } else {
+            emitLog("\n[QuickSSH Info] Remote connection lost, scheduling auto-reconnect...")
+            scheduleReconnect(java.io.IOException("Remote terminal connection stream ended"))
+        }
     }
 
     private fun closeCurrentConnection() {
@@ -953,6 +970,29 @@ internal class TerminalOutputDecoder {
 
 internal fun shouldReconnectOnNetworkAvailable(userRequestedDisconnect: Boolean, isConnected: Boolean, status: SshSessionStatus): Boolean {
     return !userRequestedDisconnect && !isConnected && status == SshSessionStatus.RECONNECTING
+}
+
+internal enum class ShellStreamEndOutcome { REMOTE_EXIT, CONNECTION_LOST, UNDECIDED }
+
+/**
+ * Decides why a shell channel's output ended. An exit-status or exit-signal means the remote
+ * shell exited; a transport that is no longer connected means the network dropped. The server
+ * may send EOF slightly before exit-status, so until [timedOut] an open transport without an
+ * exit report stays [ShellStreamEndOutcome.UNDECIDED]; after that a still-open transport counts
+ * as an exit (some servers close the channel without reporting a status).
+ */
+internal fun classifyShellStreamEnd(
+    exitStatus: Int?,
+    exitSignal: String?,
+    transportConnected: Boolean,
+    timedOut: Boolean
+): ShellStreamEndOutcome {
+    return when {
+        exitStatus != null || exitSignal != null -> ShellStreamEndOutcome.REMOTE_EXIT
+        !transportConnected -> ShellStreamEndOutcome.CONNECTION_LOST
+        timedOut -> ShellStreamEndOutcome.REMOTE_EXIT
+        else -> ShellStreamEndOutcome.UNDECIDED
+    }
 }
 
 internal fun shouldReconnectAfterDelay(userRequestedDisconnect: Boolean, isConnected: Boolean): Boolean {

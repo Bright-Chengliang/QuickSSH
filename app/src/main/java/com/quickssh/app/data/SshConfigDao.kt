@@ -229,6 +229,34 @@ interface SshConfigDao {
     @Query("SELECT * FROM ssh_folders ORDER BY sortOrder DESC, id DESC")
     fun getAllFoldersFlow(): Flow<List<SshFolder>>
 
+    @Query("SELECT * FROM tunnel_host_remarks ORDER BY hostKey")
+    fun getAllTunnelHostRemarksFlow(): Flow<List<SshTunnelHostRemark>>
+
+    @Query("SELECT * FROM tunnel_host_remarks")
+    suspend fun getAllTunnelHostRemarks(): List<SshTunnelHostRemark>
+
+    @Query("SELECT * FROM tunnel_host_remarks WHERE hostKey = :hostKey LIMIT 1")
+    suspend fun getTunnelHostRemark(hostKey: String): SshTunnelHostRemark?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertTunnelHostRemark(remark: SshTunnelHostRemark)
+
+    @Query("DELETE FROM tunnel_host_remarks WHERE hostKey = :hostKey")
+    suspend fun deleteTunnelHostRemark(hostKey: String)
+
+    /** Blank remarks are deleted instead of stored, so an entry falls back to its server name or address. */
+    @Transaction
+    suspend fun saveTunnelHostRemark(hostKey: String, remark: String) {
+        val trimmed = remark.trim()
+        if (trimmed.isEmpty()) {
+            deleteTunnelHostRemark(hostKey)
+        } else {
+            insertTunnelHostRemark(
+                SshTunnelHostRemark(hostKey = hostKey, remark = trimmed, updateTime = System.currentTimeMillis())
+            )
+        }
+    }
+
     @Query("SELECT * FROM ssh_folders ORDER BY sortOrder DESC, id DESC")
     suspend fun getAllFolders(): List<SshFolder>
 
