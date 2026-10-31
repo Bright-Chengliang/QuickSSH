@@ -170,6 +170,48 @@ class SshClientHelperTest {
     }
 
     @Test
+    fun shellExitWithStatusIsNotTreatedAsConnectionLoss() {
+        // Quitting a post-connect TUI such as `opencode --yolo` and then the shell must not
+        // reconnect, or the post-connect command restarts the TUI in a loop.
+        assertEquals(
+            ShellStreamEndOutcome.REMOTE_EXIT,
+            classifyShellStreamEnd(exitStatus = 0, exitSignal = null, transportConnected = true, timedOut = false)
+        )
+        assertEquals(
+            ShellStreamEndOutcome.REMOTE_EXIT,
+            classifyShellStreamEnd(exitStatus = 130, exitSignal = null, transportConnected = false, timedOut = false)
+        )
+        assertEquals(
+            ShellStreamEndOutcome.REMOTE_EXIT,
+            classifyShellStreamEnd(exitStatus = null, exitSignal = "HUP", transportConnected = true, timedOut = false)
+        )
+    }
+
+    @Test
+    fun deadTransportWithoutExitReportIsConnectionLoss() {
+        assertEquals(
+            ShellStreamEndOutcome.CONNECTION_LOST,
+            classifyShellStreamEnd(exitStatus = null, exitSignal = null, transportConnected = false, timedOut = false)
+        )
+        assertEquals(
+            ShellStreamEndOutcome.CONNECTION_LOST,
+            classifyShellStreamEnd(exitStatus = null, exitSignal = null, transportConnected = false, timedOut = true)
+        )
+    }
+
+    @Test
+    fun openTransportWaitsForExitStatusThenCountsAsExit() {
+        assertEquals(
+            ShellStreamEndOutcome.UNDECIDED,
+            classifyShellStreamEnd(exitStatus = null, exitSignal = null, transportConnected = true, timedOut = false)
+        )
+        assertEquals(
+            ShellStreamEndOutcome.REMOTE_EXIT,
+            classifyShellStreamEnd(exitStatus = null, exitSignal = null, transportConnected = true, timedOut = true)
+        )
+    }
+
+    @Test
     fun reconnectDelayCapsAtThirtySeconds() {
         assertEquals(2_000L, reconnectDelayMillis(1))
         assertEquals(30_000L, reconnectDelayMillis(99))
