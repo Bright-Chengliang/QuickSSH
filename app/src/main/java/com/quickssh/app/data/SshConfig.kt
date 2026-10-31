@@ -104,6 +104,20 @@ data class SshFolder(
     val updateTime: Long = System.currentTimeMillis()
 )
 
+/**
+ * User remark for a remote host on the tunnel page, keyed by [TunnelHostGroup.key] (the host address,
+ * plus the port for loopback hosts). The remark is what makes several IP-only machines distinguishable,
+ * so it is stored per host instead of per workspace.
+ */
+@Entity(
+    tableName = "tunnel_host_remarks"
+)
+data class SshTunnelHostRemark(
+    @PrimaryKey val hostKey: String,
+    val remark: String,
+    val updateTime: Long = System.currentTimeMillis()
+)
+
 @Entity(
     tableName = "ssh_tunnel_presets",
     foreignKeys = [

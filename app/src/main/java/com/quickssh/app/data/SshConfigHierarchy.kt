@@ -42,10 +42,35 @@ fun groupPreConnectTargetIds(workspaces: List<SshConfig>, preset: SshTunnelPrese
 /**
  * Tunnel page entry: every workspace that reaches the same remote host IP. A tunnel only needs an SSH
  * login on that machine, so workspaces (and their presets) are merged per host instead of listed apart.
+ *
+ * [label] is what the tunnel page shows first: the user's remark for the host, otherwise the server
+ * remarks of the workspaces on it, and only then the bare address. [hostAddress] always keeps the
+ * address visible so an entry stays identifiable.
  */
-data class TunnelHostGroup(val key: String, val label: String, val workspaces: List<SshConfig>) {
+data class TunnelHostGroup(
+    val key: String,
+    val hostAddress: String,
+    val label: String,
+    val workspaces: List<SshConfig>,
+    val remark: String? = null
+) {
     /** Workspace whose SSH login carries newly created tunnels for this host (first in display order). */
     val primary: SshConfig get() = workspaces.first()
+
+    /** True when [label] is a saved remark rather than a derived server name or the address. */
+    val hasRemark: Boolean get() = !remark.isNullOrBlank()
+}
+
+/**
+ * Preferred title of a tunnel host: a saved remark wins, then the distinct server remarks of the
+ * workspaces sharing that host, and finally the address itself.
+ */
+fun tunnelHostTitle(workspaces: List<SshConfig>, hostAddress: String, remark: String?): String {
+    remark?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+    val serverNames = workspaces
+        .mapNotNull { it.serverDisplayName?.trim()?.takeIf { name -> name.isNotEmpty() } }
+        .distinct()
+    return serverNames.joinToString(" / ").ifBlank { hostAddress }
 }
 
 /**
@@ -59,11 +84,22 @@ fun SshConfig.tunnelHostKey(): String {
 }
 
 /** Remote hosts in home-screen order; local shells cannot forward ports and are left out. */
-fun tunnelHostGroups(configs: List<SshConfig>): List<TunnelHostGroup> =
-    groupedSshServers(configs.filterNot { it.isLocalSession || it.authType == "LOCAL" })
+fun tunnelHostGroups(configs: List<SshConfig>, remarks: List<SshTunnelHostRemark> = emptyList()): List<TunnelHostGroup> {
+    val remarksByHost = remarks.associate { it.hostKey to it.remark }
+    return groupedSshServers(configs.filterNot { it.isLocalSession || it.authType == "LOCAL" })
         .flatMap { it.workspaces }
         .groupBy { it.tunnelHostKey() }
-        .map { (key, workspaces) -> TunnelHostGroup(key, key, workspaces) }
+        .map { (key, workspaces) ->
+            val remark = remarksByHost[key]
+            TunnelHostGroup(
+                key = key,
+                hostAddress = key,
+                label = tunnelHostTitle(workspaces, key, remark),
+                workspaces = workspaces,
+                remark = remark?.takeIf { it.isNotBlank() }
+            )
+        }
+}
 
 /** Presets of every workspace on [group]'s host; identical forwards saved under several workspaces are listed once. */
 fun tunnelPresetsForHost(presets: List<SshTunnelPreset>, group: TunnelHostGroup?): List<SshTunnelPreset> {

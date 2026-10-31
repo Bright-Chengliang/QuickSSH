@@ -191,6 +191,79 @@ class SshConfigHierarchyTest {
         assertEquals("Deploy", entry.workspaceName)
     }
 
+    @Test
+    fun tunnelHostGroupsFallsBackToAddressWithoutRemark() {
+        val configs = listOf(
+            config(id = 1, name = "Deploy", host = "10.0.0.5"),
+            config(id = 2, name = "Logs", host = "10.0.0.5")
+        )
+
+        val groups = tunnelHostGroups(configs)
+
+        assertEquals(1, groups.size)
+        assertEquals("10.0.0.5", groups.first().key)
+        assertEquals("10.0.0.5", groups.first().label)
+        assertEquals(false, groups.first().hasRemark)
+        assertEquals(2, groups.first().workspaces.size)
+    }
+
+    @Test
+    fun tunnelHostGroupsPrefersServerDisplayNameOverAddress() {
+        val configs = listOf(
+            config(id = 1, name = "Deploy", host = "10.0.0.5", serverDisplayName = "家里 NAS"),
+            config(id = 2, name = "Logs", host = "10.0.0.5", serverDisplayName = "家里 NAS")
+        )
+
+        val groups = tunnelHostGroups(configs)
+
+        assertEquals("家里 NAS", groups.first().label)
+        assertEquals("10.0.0.5", groups.first().hostAddress)
+    }
+
+    @Test
+    fun tunnelHostGroupsAppliesHostRemarkOverServerNames() {
+        val configs = listOf(
+            config(id = 1, name = "Deploy", host = "10.0.0.5", serverDisplayName = "root@10.0.0.5:22")
+        )
+        val remarks = listOf(SshTunnelHostRemark(hostKey = "10.0.0.5", remark = "公司跳板"))
+
+        val group = tunnelHostGroups(configs, remarks).first()
+
+        assertEquals("公司跳板", group.label)
+        assertEquals("公司跳板", group.remark)
+        assertEquals(true, group.hasRemark)
+        assertEquals("10.0.0.5", group.hostAddress)
+    }
+
+    @Test
+    fun tunnelHostGroupsKeepsLoopbackHostsSeparateByPort() {
+        val configs = listOf(
+            config(id = 1, name = "home-pc", host = "127.0.0.1").copy(port = 22022),
+            config(id = 2, name = "work-pc", host = "127.0.0.1").copy(port = 22023)
+        )
+
+        val groups = tunnelHostGroups(configs)
+
+        assertEquals(listOf("127.0.0.1:22022", "127.0.0.1:22023"), groups.map { it.label })
+    }
+
+    @Test
+    fun tunnelHostTitleIgnoresBlankRemarksAndJoinsDistinctServerNames() {
+        val workspaces = listOf(
+            config(id = 1, name = "Deploy", serverDisplayName = "甲机"),
+            config(id = 2, name = "Logs", serverDisplayName = "乙机"),
+            config(id = 3, name = "Other", serverDisplayName = "甲机")
+        )
+
+        assertEquals("甲机 / 乙机", tunnelHostTitle(workspaces, "10.0.0.5", null))
+        assertEquals("甲机 / 乙机", tunnelHostTitle(workspaces, "10.0.0.5", "   "))
+        assertEquals("备注", tunnelHostTitle(workspaces, "10.0.0.5", " 备注 "))
+        assertEquals(
+            "10.0.0.5",
+            tunnelHostTitle(emptyList(), "10.0.0.5", null)
+        )
+    }
+
     private fun config(
         id: Long = 0,
         name: String,

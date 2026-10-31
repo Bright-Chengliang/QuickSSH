@@ -427,6 +427,9 @@ class MainActivity : FragmentActivity() {
     private val tunnelPresetsFlow by lazy {
         db.sshConfigDao().getAllTunnelPresetsFlow().retryDatabaseFlow("Tunnel presets")
     }
+    private val tunnelHostRemarksFlow by lazy {
+        db.sshConfigDao().getAllTunnelHostRemarksFlow().retryDatabaseFlow("Tunnel host remarks")
+    }
     private val transferHistoryFlow by lazy {
         db.transferHistoryDao().getAllFlow().retryDatabaseFlow("Transfer history")
     }
@@ -543,6 +546,7 @@ class MainActivity : FragmentActivity() {
         val configs by configsFlow.collectAsState(initial = emptyList())
         val folders by foldersFlow.collectAsState(initial = emptyList())
         val tunnelPresets by tunnelPresetsFlow.collectAsState(initial = emptyList())
+        val tunnelHostRemarks by tunnelHostRemarksFlow.collectAsState(initial = emptyList())
         val settings = remember { getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
         val transferHistory by transferHistoryFlow.collectAsState(initial = emptyList())
         val service = boundService
@@ -2358,7 +2362,7 @@ class MainActivity : FragmentActivity() {
             }
             "TUNNELS" -> {
                 // Tunnels are organised per remote host IP: presets of every workspace on that host are shared.
-                val tunnelGroups = remember(configs) { tunnelHostGroups(configs) }
+                val tunnelGroups = remember(configs, tunnelHostRemarks) { tunnelHostGroups(configs, tunnelHostRemarks) }
                 val selectedTunnelGroup = tunnelGroups.firstOrNull { group -> group.workspaces.any { it.id == tunnelConfig?.id } }
                 val visibleTunnelPresets = tunnelPresetsForHost(tunnelPresets, selectedTunnelGroup)
                 LaunchedEffect(configs, tunnelConfig?.id) {
@@ -2417,6 +2421,7 @@ class MainActivity : FragmentActivity() {
                     presetNote = tunnelPresetNote,
                     selectedPresetId = selectedTunnelPresetId,
                     tunnelPresets = visibleTunnelPresets,
+                    hostRemarks = tunnelHostRemarks,
                     statusText = tunnelStatusText,
                     tunnelStates = tunnelStates,
                     bottomBar = {
@@ -2557,7 +2562,12 @@ class MainActivity : FragmentActivity() {
                         TunnelForegroundService.stopAllTunnels(this@MainActivity)
                     },
                     onOpenInternal = ::openTunnelUrlInternal,
-                    onOpenExternal = ::openTunnelUrlExternal
+                    onOpenExternal = ::openTunnelUrlExternal,
+                    onHostRemarkChange = { hostKey, remark ->
+                        scope.launch(Dispatchers.IO) {
+                            db.sshConfigDao().saveTunnelHostRemark(hostKey, remark)
+                        }
+                    }
                 )
             }
             "SESSIONS" -> {

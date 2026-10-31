@@ -64,6 +64,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.quickssh.app.R
 import com.quickssh.app.data.SshConfig
+import com.quickssh.app.data.SshTunnelHostRemark
 import com.quickssh.app.data.SshTunnelPreset
 import com.quickssh.app.data.TUNNEL_DIRECTION_LOCAL
 import com.quickssh.app.data.TUNNEL_DIRECTION_REMOTE
@@ -92,6 +93,7 @@ fun TunnelScreen(
     presetNote: String,
     selectedPresetId: Long?,
     tunnelPresets: List<SshTunnelPreset>,
+    hostRemarks: List<SshTunnelHostRemark> = emptyList(),
     statusText: String,
     tunnelStates: List<TunnelServiceState>,
     bottomBar: @Composable () -> Unit,
@@ -111,13 +113,15 @@ fun TunnelScreen(
     onStopTunnel: (String) -> Unit,
     onStopAllTunnels: () -> Unit,
     onOpenInternal: (String) -> Unit,
-    onOpenExternal: (String) -> Unit
+    onOpenExternal: (String) -> Unit,
+    onHostRemarkChange: (String, String) -> Unit = { _, _ -> }
 ) {
     val language = LocalQuickSshLanguage.current
     val activeTunnels = tunnelStates.filter { it.status == TunnelStatus.CONNECTING || it.status == TunnelStatus.RUNNING }
     val remoteForward = direction == TUNNEL_DIRECTION_REMOTE
     val portsValid = remotePort.toIntOrNull()?.let { it in 1..65535 } == true &&
         (!remoteForward || localPort.toIntOrNull()?.let { it in 1..65535 } == true)
+    var remarkTarget by remember { mutableStateOf<TunnelHostGroup?>(null) }
 
     Scaffold(
         topBar = {
@@ -136,7 +140,13 @@ fun TunnelScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            TunnelServerSelector(configs, selectedConfig, onConfigSelected)
+            TunnelServerSelector(
+                configs = configs,
+                selectedConfig = selectedConfig,
+                hostRemarks = hostRemarks,
+                onConfigSelected = onConfigSelected,
+                onEditHostRemark = { group -> remarkTarget = group }
+            )
 
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 TunnelPresetSelector(
@@ -304,6 +314,17 @@ fun TunnelScreen(
                 }
             }
         }
+    }
+
+    remarkTarget?.let { group ->
+        TunnelHostRemarkDialog(
+            group = group,
+            onDismiss = { remarkTarget = null },
+            onSave = { remark ->
+                onHostRemarkChange(group.key, remark)
+                remarkTarget = null
+            }
+        )
     }
 }
 
@@ -695,10 +716,16 @@ private fun TunnelStateRow(
 
 /** Picks a remote host; workspaces sharing its IP are one entry, and the host's first workspace is selected. */
 @Composable
-private fun TunnelServerSelector(configs: List<SshConfig>, selectedConfig: SshConfig?, onConfigSelected: (SshConfig) -> Unit) {
+private fun TunnelServerSelector(
+    configs: List<SshConfig>,
+    selectedConfig: SshConfig?,
+    hostRemarks: List<SshTunnelHostRemark>,
+    onConfigSelected: (SshConfig) -> Unit,
+    onEditHostRemark: (TunnelHostGroup) -> Unit
+) {
     val language = LocalQuickSshLanguage.current
     var expanded by remember { mutableStateOf(false) }
-    val groups by remember(configs) { derivedStateOf { tunnelHostGroups(configs) } }
+    val groups by remember(configs, hostRemarks) { derivedStateOf { tunnelHostGroups(configs, hostRemarks) } }
     val selectedGroup = groups.firstOrNull { group -> group.workspaces.any { it.id == selectedConfig?.id } }
     Box(modifier = Modifier.fillMaxWidth()) {
         ResponsiveTunnelOutlinedButton(
@@ -712,7 +739,7 @@ private fun TunnelServerSelector(configs: List<SshConfig>, selectedConfig: SshCo
                 DropdownMenuItem(
                     text = {
                         Column {
-                            Text(group.label, style = MaterialTheme.typography.bodyLarge)
+                            Text(group.label, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(
                                 tunnelHostDetail(group, language),
                                 style = MaterialTheme.typography.bodySmall,
@@ -733,10 +760,81 @@ private fun TunnelServerSelector(configs: List<SshConfig>, selectedConfig: SshCo
             }
         }
     }
+    if (selectedGroup != null) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = selectedGroup.hostAddress,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.outline,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            FeedbackTextButton(onClick = { onEditHostRemark(selectedGroup) }) {
+                Text(
+                    if (selectedGroup.hasRemark) {
+                        language.text("改备注名", "Rename")
+                    } else {
+                        language.text("加备注名", "Add remark")
+                    }
+                )
+            }
+        }
+    }
 }
 
+/** Rename a tunnel host so several IP-only machines stay distinguishable. */
+@Composable
+internal fun TunnelHostRemarkDialog(
+    group: TunnelHostGroup,
+    onDismiss: () -> Unit,
+    onSave: (String) -> Unit
+) {
+    val language = LocalQuickSshLanguage.current
+    var draft by remember(group.key, group.remark) { mutableStateOf(group.remark.orEmpty()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(language.text("主机备注名", "Host remark")) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = language.text(
+                        "给 ${group.hostAddress} 起一个好认的名字，隧道页会优先显示它；留空恢复默认。",
+                        "Name ${group.hostAddress} so the tunnel page shows it first. Clear it to restore the default."
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.outline
+                )
+                OutlinedTextField(
+                    value = draft,
+                    onValueChange = { draft = it.take(60) },
+                    label = { Text(language.text("备注名", "Remark")) },
+                    placeholder = { Text(language.text("例：家里 NAS", "e.g. Home NAS")) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onSave(draft) }) { Text(language.text("保存", "Save")) }
+        },
+        dismissButton = {
+            OutlinedButton(onClick = onDismiss) { Text(language.text("取消", "Cancel")) }
+        }
+    )
+}
+
+/** Title in the picker: the remark or server name, with the address kept visible next to it. */
 internal fun tunnelHostLabel(group: TunnelHostGroup, language: AppLanguage): String =
-    "${group.label} · ${tunnelHostDetail(group, language)}"
+    if (group.label == group.hostAddress) {
+        "${group.label} · ${tunnelHostDetail(group, language)}"
+    } else {
+        "${group.label} · ${group.hostAddress}"
+    }
 
 /** Server names on that host and how many workspaces share it. */
 internal fun tunnelHostDetail(group: TunnelHostGroup, language: AppLanguage): String {
