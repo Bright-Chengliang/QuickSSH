@@ -301,13 +301,16 @@ fun TerminalScreen(
             ) {
                 val density = LocalDensity.current
                 val textMeasurer = rememberTextMeasurer()
-                val charWidthPx = textMeasurer.measure(
-                    text = AnnotatedString("W"),
-                    style = TextStyle(
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = terminalFontSize
-                    )
-                ).size.width.coerceAtLeast(1)
+                // Measuring a glyph on every recomposition costs a full text layout pass per frame.
+                val charWidthPx = remember(textMeasurer, terminalFontSizeSp) {
+                    textMeasurer.measure(
+                        text = AnnotatedString("W"),
+                        style = TextStyle(
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = terminalFontSize
+                        )
+                    ).size.width.coerceAtLeast(1)
+                }
                 val widthPx = with(density) { maxWidth.toPx() }.roundToInt().coerceAtLeast(1)
                 val heightPx = with(density) { maxHeight.toPx() }.roundToInt().coerceAtLeast(1)
                 val lineHeightPx = with(density) { terminalLineHeight.toPx() }.roundToInt().coerceAtLeast(1)

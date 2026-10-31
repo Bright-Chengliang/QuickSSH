@@ -143,6 +143,25 @@ internal fun databaseRetryDelayMillis(attempt: Long): Long {
     return ((attempt + 1L) * 250L).coerceAtMost(5_000L)
 }
 
+/**
+ * Termux keeps DECSET bracketed-paste in a private flag with no public getter, so it is read reflectively.
+ * Any failure must fall back to false: a wrong `true` would wrap pasted text in ESC[200~ markers and send
+ * literal garbage into the shell.
+ */
+internal fun termuxBracketedPasteMode(emulator: com.termux.terminal.TerminalEmulator): Boolean {
+    return try {
+        val field = com.termux.terminal.TerminalEmulator::class.java
+            .getDeclaredField("mCurrentDecSetFlags")
+            .apply { isAccessible = true }
+        (field.getInt(emulator) and TERMUX_DECSET_BIT_BRACKETED_PASTE) != 0
+    } catch (_: Throwable) {
+        false
+    }
+}
+
+/** `TerminalEmulator.DECSET_BIT_BRACKETED_PASTE_MODE`, a private constant in Termux 0.118. */
+private const val TERMUX_DECSET_BIT_BRACKETED_PASTE = 1024
+
 private fun <T> Flow<T>.retryDatabaseFlow(label: String): Flow<T> {
     return retryWhen { cause, attempt ->
         Log.e(DATABASE_FLOW_LOG_TAG, "$label flow failed; retrying", cause)
@@ -1509,6 +1528,23 @@ class MainActivity : FragmentActivity() {
                     }
                 }
 
+                suspend fun publishTerminalFlags(
+                    alternateScreen: Boolean,
+                    applicationCursorKeys: Boolean,
+                    bracketedPasteMode: Boolean
+                ) {
+                    withContext(Dispatchers.Main) {
+                        // Only assign changed flags: each write invalidates the composing terminal screen.
+                        if (state.alternateScreen != alternateScreen) state.alternateScreen = alternateScreen
+                        if (state.applicationCursorKeys != applicationCursorKeys) {
+                            state.applicationCursorKeys = applicationCursorKeys
+                        }
+                        if (state.bracketedPasteMode != bracketedPasteMode) {
+                            state.bracketedPasteMode = bracketedPasteMode
+                        }
+                    }
+                }
+
                 suspend fun snapshotTerminalState(): TerminalUiSnapshot {
                     return state.bufferMutex.withLock {
                         TerminalUiSnapshot(
@@ -1521,6 +1557,22 @@ class MainActivity : FragmentActivity() {
                 }
 
                 suspend fun flushTerminalUi() {
+                    // The native Termux view renders the screen itself, so the legacy scrollback list is not
+                    // displayed: re-serialising tens of thousands of lines into a new state every 80 ms only
+                    // caused scroll jank. The mode flags do matter to the control panel, and they come from
+                    // the Termux emulator because this stream is no longer mirrored into the legacy buffer.
+                    if (helper.termuxSession != null) {
+                        val emulator = helper.termuxSession?.emulator
+                        if (emulator != null) {
+                            publishTerminalFlags(
+                                alternateScreen = emulator.isAlternateBufferActive,
+                                applicationCursorKeys = emulator.isCursorKeysApplicationMode,
+                                bracketedPasteMode = termuxBracketedPasteMode(emulator)
+                            )
+                        }
+                        lastUiUpdateAt = System.currentTimeMillis()
+                        return
+                    }
                     val snapshot = snapshotTerminalState()
                     latestSnapshot = snapshot.logs
                     lastUiUpdateAt = System.currentTimeMillis()
@@ -1572,6 +1624,12 @@ class MainActivity : FragmentActivity() {
                         }
                         openTerminalIfWaiting()
 
+                        // The native Termux emulator already parses this stream itself. Re-running every
+                        // byte through the legacy buffer doubles the ANSI work on the main parse path and
+                        // is pure cost on a real device; the flags the control panel needs are read off
+                        // the Termux emulator in flushTerminalUi().
+                        if (helper.termuxSession != null) return@collect
+
                         val parsedOutput = state.bufferMutex.withLock {
                             val wasSynchronizedOutput = state.buffer.isSynchronizedOutputMode
                             state.buffer.appendRaw(output)
@@ -1587,10 +1645,12 @@ class MainActivity : FragmentActivity() {
                         parsedOutput.responses.forEach { response ->
                             currentHelper()?.sendRawInput(response)
                         }
-                        withContext(Dispatchers.Main) {
-                            state.alternateScreen = parsedOutput.alternateScreen
-                            state.applicationCursorKeys = parsedOutput.applicationCursorKeys
-                            state.bracketedPasteMode = parsedOutput.bracketedPasteMode
+                        if (helper.termuxSession == null) {
+                            withContext(Dispatchers.Main) {
+                                state.alternateScreen = parsedOutput.alternateScreen
+                                state.applicationCursorKeys = parsedOutput.applicationCursorKeys
+                                state.bracketedPasteMode = parsedOutput.bracketedPasteMode
+                            }
                         }
 
                         val now = System.currentTimeMillis()
